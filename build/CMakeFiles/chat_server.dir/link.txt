@@ -1,0 +1,1 @@
+/usr/bin/c++ -rdynamic CMakeFiles/chat_server.dir/server.cc.o -o bin/chat_server  libprotobuf_codec.a libchat_proto.a -lmuduo_net -lmuduo_base -lz -lprotobuf -lpthread 
