@@ -1,2 +1,0 @@
-/usr/bin/ar qc libchat_proto.a CMakeFiles/chat_proto.dir/chat.pb.cc.o
-/usr/bin/ranlib libchat_proto.a
