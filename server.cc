@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <string>
 #include <memory>
+#include <unistd.h>
 
 using namespace muduo;
 using namespace muduo::net;

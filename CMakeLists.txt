@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.0)
 project(mychat)
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
+set(CMAKE_CXX_STANDARD 17)
+
 add_library(protobuf_codec codec.cc)
 target_link_libraries(protobuf_codec protobuf muduo_net muduo_base pthread z)
 
