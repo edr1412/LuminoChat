@@ -132,12 +132,17 @@ private:
         bool loginSuccess = false;
         std::string storedPassword;
 
-        UserMapPtr users_ptr = getUsersPtr();
-
-        auto it = users_ptr->find(message->username());
-        if (it != users_ptr->end())
+        // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
         {
-            storedPassword = it->second;
+            UserMapPtr users_ptr = getUsersPtr();
+            // users_ptr 一旦拿到，就不再需要锁了
+            // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
+
+            auto it = users_ptr->find(message->username());
+            if (it != users_ptr->end())
+            {
+                storedPassword = it->second;
+            }
         }
 
 
@@ -169,15 +174,17 @@ private:
         chat::RegisterResponse response;
         std::pair<std::unordered_map<std::string, std::string>::iterator, bool> result;
 
+        // write段修改对象，若引用计数为1，则可以直接修改，无需拷贝；若引用计数大于1，则启动copy-on-other-reading
+        // 必须全程持锁
         {
             MutexLockGuard lock(users_mutex_);
-
+            // 如果引用计数大于1，说明这时候其他线程正在读，那么不能在原来的数据上修改，得把users_ptr_替换为新副本，然后再修改。这可能让那些线程读到旧数据，但比起网络延迟可以忽略不计。
             if (!users_ptr_.unique())
             {
                 users_ptr_.reset(new UserMap(*users_ptr_));
             }
+            // 如果引用计数为1，说明没有用户在读，那么就能安全地修改共享对象，节约一次Map拷贝。实测99%的情况下，可以节约一次拷贝。
             assert(users_ptr_.unique());
-
             result = users_ptr_->emplace(message->username(), message->password());
         }
 
@@ -203,12 +210,17 @@ private:
         LOG_INFO << "onSearchRequest: " << message->GetTypeName();
         chat::SearchResponse response;
 
-        UserMapPtr users_ptr = getUsersPtr();
-        for (const auto &user : *users_ptr)
+        // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
         {
-            if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
+            UserMapPtr users_ptr = getUsersPtr();
+            // users_ptr 一旦拿到，就不再需要锁了
+            // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
+            for (const auto &user : *users_ptr)
             {
-                response.add_usernames(user.first);
+                if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
+                {
+                    response.add_usernames(user.first);
+                }
             }
         }
 
