@@ -5,9 +5,11 @@
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/TcpServer.h>
+#include <muduo/base/ThreadLocalSingleton.h>
 
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <memory>
 #include <unistd.h>
@@ -20,6 +22,9 @@ using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using LoginResponsePtr = std::shared_ptr<chat::LoginResponse>;
 using RegisterResponsePtr = std::shared_ptr<chat::RegisterResponse>;
+using ConnectionList = std::unordered_set<TcpConnectionPtr>;
+using LocalConnections = ThreadLocalSingleton<ConnectionList>;
+
 
 class ChatServer
 {
@@ -43,6 +48,7 @@ public:
 
     void start()
     {
+        server_.setThreadInitCallback(std::bind(&ChatServer::threadInit, this, _1));
         server_.start();
     }
 
@@ -53,21 +59,63 @@ public:
 
 
 private:
+    void threadInit(EventLoop* loop)
+    {
+        // LocalConnections 存储当前线程的所有连接
+        assert(LocalConnections::pointer() == NULL);
+        LocalConnections::instance();
+        assert(LocalConnections::pointer() != NULL);
+        // 只有loops需要加锁保护
+        MutexLockGuard lock(loops_mutex_);
+        loops_.insert(loop);
+    }
+
     void onConnection(const TcpConnectionPtr &conn)
     {
         LOG_INFO << "ChatServer - " << conn->peerAddress().toIpPort() << " -> "
                  << conn->localAddress().toIpPort() << " is "
                  << (conn->connected() ? "UP" : "DOWN");
 
-        MutexLockGuard lock(connections_mutex_);
+        // 只需将连接加入到当前线程的 LocalConnections 中，无需加锁
         if (conn->connected())
         {
-            connections_.insert(conn);
+        LocalConnections::instance().insert(conn);
         }
         else
         {
-            connections_.erase(conn);
+        LocalConnections::instance().erase(conn);
         }
+    }
+
+    void onTextMessage(const TcpConnectionPtr &conn,
+                       const TextMessagePtr &message,
+                       Timestamp)
+    {
+        LOG_INFO << "onTextMessage: " << message->GetTypeName();
+
+        EventLoop::Functor f = std::bind(&ChatServer::distributeTextMessage, this, message);
+        LOG_DEBUG;
+
+        // 只有loops需要加锁保护
+        MutexLockGuard lock(loops_mutex_);
+
+        for (const auto &loop : loops_)
+        {
+            loop->queueInLoop(f);
+        }
+        LOG_DEBUG;
+
+    }
+
+    void distributeTextMessage(const TextMessagePtr &message)
+    {
+        // 在自己的 loop thread 中执行，无需加锁
+        LOG_DEBUG << "begin";
+        for (const auto &connection :LocalConnections::instance())
+        {
+            codec_.send(connection, *message);
+        }
+        LOG_DEBUG << "end";
     }
 
     void onLoginRequest(const TcpConnectionPtr &conn,
@@ -134,19 +182,6 @@ private:
         codec_.send(conn, response);
     }
 
-    void onTextMessage(const TcpConnectionPtr &conn,
-                       const TextMessagePtr &message,
-                       Timestamp)
-    {
-        LOG_INFO << "onTextMessage: " << message->GetTypeName();
-
-        MutexLockGuard lock(connections_mutex_);
-        for (const auto &connection : connections_)
-        {
-            codec_.send(connection, *message);
-        }
-    }
-
     void onUnknownMessageType(const TcpConnectionPtr &conn,
                               const MessagePtr &message,
                               Timestamp)
@@ -158,9 +193,10 @@ private:
     TcpServer server_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
-    MutexLock connections_mutex_;
+    MutexLock loops_mutex_;
     MutexLock users_mutex_;
-    std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(connections_mutex_);
+    //std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(connections_mutex_);
+    std::unordered_set<EventLoop*> loops_ GUARDED_BY(loops_mutex_);
     std::unordered_map<std::string, std::string> users_  GUARDED_BY(users_mutex_); // Key: username, Value: password
 };
 
