@@ -34,7 +34,8 @@ public:
     ChatServer(EventLoop *loop, const InetAddress &listenAddr)
         : server_(loop, listenAddr, "ChatServer"),
           dispatcher_(std::bind(&ChatServer::onUnknownMessageType, this, _1, _2, _3)),
-          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3))
+          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3)),
+          users_ptr_(new UserMap)
     {
         dispatcher_.registerMessageCallback<chat::LoginRequest>(
             std::bind(&ChatServer::onLoginRequest, this, _1, _2, _3));
