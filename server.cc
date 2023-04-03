@@ -23,6 +23,9 @@ using SearchRequestPtr = std::shared_ptr<chat::SearchRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using ConnectionList = std::unordered_set<TcpConnectionPtr>;
 using LocalConnections = ThreadLocalSingleton<ConnectionList>;
+using UserMap = std::unordered_map<std::string, std::string>;
+using UserMapPtr = std::shared_ptr<UserMap>;
+
 
 
 class ChatServer
@@ -127,15 +130,15 @@ private:
         chat::LoginResponse response;
         bool loginSuccess = false;
         std::string storedPassword;
-        
+
+        UserMapPtr users_ptr = getUsersPtr();
+
+        auto it = users_ptr->find(message->username());
+        if (it != users_ptr->end())
         {
-            MutexLockGuard lock(users_mutex_);
-            auto it = users_.find(message->username());
-            if (it != users_.end())
-            {
-                storedPassword = it->second;
-            }
+            storedPassword = it->second;
         }
+
 
         if (storedPassword == message->password())
         {
@@ -164,10 +167,19 @@ private:
         
         chat::RegisterResponse response;
         std::pair<std::unordered_map<std::string, std::string>::iterator, bool> result;
+
         {
             MutexLockGuard lock(users_mutex_);
-            result = users_.emplace(message->username(), message->password());
+
+            if (!users_ptr_.unique())
+            {
+                users_ptr_.reset(new UserMap(*users_ptr_));
+            }
+            assert(users_ptr_.unique());
+
+            result = users_ptr_->emplace(message->username(), message->password());
         }
+
 
         if (result.second)
         {
@@ -190,8 +202,8 @@ private:
         LOG_INFO << "onSearchRequest: " << message->GetTypeName();
         chat::SearchResponse response;
 
-        MutexLockGuard lock(users_mutex_);
-        for (const auto &user : users_)
+        UserMapPtr users_ptr = getUsersPtr();
+        for (const auto &user : *users_ptr)
         {
             if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
             {
@@ -210,6 +222,12 @@ private:
         conn->shutdown();
     }
 
+    UserMapPtr getUsersPtr() 
+    {
+        MutexLockGuard lock(users_mutex_);
+        return users_ptr_;
+    }
+
     TcpServer server_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
@@ -217,7 +235,7 @@ private:
     MutexLock users_mutex_;
     //std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(connections_mutex_);
     std::unordered_set<EventLoop*> loops_ GUARDED_BY(loops_mutex_);
-    std::unordered_map<std::string, std::string> users_  GUARDED_BY(users_mutex_); // Key: username, Value: password
+    UserMapPtr users_ptr_  GUARDED_BY(users_mutex_); // Key: username, Value: password
 };
 
 int main(int argc, char *argv[])
