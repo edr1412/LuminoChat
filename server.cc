@@ -59,7 +59,7 @@ private:
                  << conn->localAddress().toIpPort() << " is "
                  << (conn->connected() ? "UP" : "DOWN");
 
-        MutexLockGuard lock(mutex_);
+        MutexLockGuard lock(connections_mutex_);
         if (conn->connected())
         {
             connections_.insert(conn);
@@ -76,9 +76,24 @@ private:
     {
         LOG_INFO << "onLoginRequest: " << message->GetTypeName();
         chat::LoginResponse response;
+        bool loginSuccess = false;
+        std::string storedPassword;
+        
+        {
+            MutexLockGuard lock(users_mutex_);
+            auto it = users_.find(message->username());
+            if (it != users_.end())
+            {
+                storedPassword = it->second;
+            }
+        }
 
-        auto it = users_.find(message->username());
-        if (it != users_.end() && it->second == message->password())
+        if (storedPassword == message->password())
+        {
+            loginSuccess = true;
+        }
+
+        if (loginSuccess)
         {
             response.set_success(true);
             response.set_error_message("");
@@ -97,9 +112,14 @@ private:
                            Timestamp)
     {
         LOG_INFO << "onRegisterRequest: " << message->GetTypeName();
+        
         chat::RegisterResponse response;
+        std::pair<std::unordered_map<std::string, std::string>::iterator, bool> result;
+        {
+            MutexLockGuard lock(users_mutex_);
+            result = users_.emplace(message->username(), message->password());
+        }
 
-        auto result = users_.emplace(message->username(), message->password());
         if (result.second)
         {
             response.set_success(true);
@@ -120,7 +140,7 @@ private:
     {
         LOG_INFO << "onTextMessage: " << message->GetTypeName();
 
-        MutexLockGuard lock(mutex_);
+        MutexLockGuard lock(connections_mutex_);
         for (const auto &connection : connections_)
         {
             codec_.send(connection, *message);
@@ -138,9 +158,10 @@ private:
     TcpServer server_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
-    std::unordered_map<std::string, std::string> users_; // Key: username, Value: password
-    MutexLock mutex_;
-    std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(mutex_);
+    MutexLock connections_mutex_;
+    MutexLock users_mutex_;
+    std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(connections_mutex_);
+    std::unordered_map<std::string, std::string> users_  GUARDED_BY(users_mutex_); // Key: username, Value: password
 };
 
 int main(int argc, char *argv[])
