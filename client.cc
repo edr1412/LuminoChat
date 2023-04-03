@@ -22,7 +22,7 @@ using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using LoginResponsePtr = std::shared_ptr<chat::LoginResponse>;
 using RegisterResponsePtr = std::shared_ptr<chat::RegisterResponse>;
-using ListUsersResponsePtr = std::shared_ptr<chat::ListUsersResponse>;
+using SearchResponsePtr = std::shared_ptr<chat::SearchResponse>;
 
 class ChatClient
 {
@@ -40,8 +40,8 @@ public:
         std::bind(&ChatClient::onRegisterResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::TextMessage>(
         std::bind(&ChatClient::onTextMessage, this, _1, _2, _3));
-    dispatcher_.registerMessageCallback<chat::ListUsersResponse>(
-      std::bind(&ChatClient::onListUsersResponse, this, _1, _2, _3));
+    dispatcher_.registerMessageCallback<chat::SearchResponse>(
+      std::bind(&ChatClient::onSearchResponse, this, _1, _2, _3));
     client_.setConnectionCallback(
         std::bind(&ChatClient::onConnection, this, _1));
     client_.setMessageCallback(
@@ -119,17 +119,17 @@ private:
     }
   }
 
-  void onListUsersResponse(const TcpConnectionPtr &conn,
-                         const ListUsersResponsePtr &message,
-                         Timestamp)
+  void onSearchResponse(const TcpConnectionPtr &conn,
+                      const SearchResponsePtr &message,
+                      Timestamp)
+{
+  LOG_INFO << "onSearchResponse: " << message->GetTypeName();
+  printf(">>> Search Result:\n");
+  for (const auto &username : message->usernames())
   {
-      LOG_INFO << "onListUsersResponse: " << message->GetTypeName();
-      printf("Online users:\n");
-      for (const auto& username : message->usernames())
-      {
-          printf("  %s\n", username.c_str());
-      }
+    printf(">>> - %s\n", username.c_str());
   }
+}
 
   void onTextMessage(const TcpConnectionPtr &conn,
                      const TextMessagePtr &message,
@@ -182,9 +182,12 @@ private:
       textMessage.set_content(message);
       codec_.send(connection_, textMessage);
     }
-    else if (cmd == "list")
+    else if (cmd == "search")
     {
-      chat::ListUsersRequest request;
+      std::string keyword;
+      iss >> keyword;
+      chat::SearchRequest request;
+      request.set_keyword(keyword);
       codec_.send(connection_, request);
     }
     else

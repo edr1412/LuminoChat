@@ -27,9 +27,10 @@ message RegisterResponse {
   string error_message = 2;
 }
 
-message ListUsersRequest {
+message SearchRequest {
+  string keyword = 1;
 }
 
-message ListUsersResponse {
+message SearchResponse {
   repeated string usernames = 1;
 }

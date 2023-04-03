@@ -19,7 +19,7 @@ using namespace muduo::net;
 
 using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
-using ListUsersRequestPtr = std::shared_ptr<chat::ListUsersRequest>;
+using SearchRequestPtr = std::shared_ptr<chat::SearchRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using ConnectionList = std::unordered_set<TcpConnectionPtr>;
 using LocalConnections = ThreadLocalSingleton<ConnectionList>;
@@ -39,8 +39,8 @@ public:
             std::bind(&ChatServer::onRegisterRequest, this, _1, _2, _3));
         dispatcher_.registerMessageCallback<chat::TextMessage>(
             std::bind(&ChatServer::onTextMessage, this, _1, _2, _3));
-        dispatcher_.registerMessageCallback<chat::ListUsersRequest>(
-            std::bind(&ChatServer::onListUsersRequest, this, _1, _2, _3));
+        dispatcher_.registerMessageCallback<chat::SearchRequest>(
+            std::bind(&ChatServer::onSearchRequest, this, _1, _2, _3));
         server_.setConnectionCallback(
             std::bind(&ChatServer::onConnection, this, _1));
         server_.setMessageCallback(
@@ -183,17 +183,22 @@ private:
         codec_.send(conn, response);
     }
 
-    void onListUsersRequest(const TcpConnectionPtr &conn,
-                        const ListUsersRequestPtr &message,
-                        Timestamp)
+    void onSearchRequest(const TcpConnectionPtr &conn,
+                     const SearchRequestPtr &message,
+                     Timestamp)
     {
-        LOG_INFO << "onListUsersRequest: " << message->GetTypeName();
-        chat::ListUsersResponse response;
+        LOG_INFO << "onSearchRequest: " << message->GetTypeName();
+        chat::SearchResponse response;
+
         MutexLockGuard lock(users_mutex_);
         for (const auto &user : users_)
         {
-            response.add_usernames(user.first);
+            if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
+            {
+                response.add_usernames(user.first);
+            }
         }
+
         codec_.send(conn, response);
     }
 
