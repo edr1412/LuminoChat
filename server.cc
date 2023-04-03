@@ -46,6 +46,12 @@ public:
         server_.start();
     }
 
+    void setThreadNum(int numThreads)
+    {
+        server_.setThreadNum(numThreads);
+    }
+
+
 private:
     void onConnection(const TcpConnectionPtr &conn)
     {
@@ -53,6 +59,7 @@ private:
                  << conn->localAddress().toIpPort() << " is "
                  << (conn->connected() ? "UP" : "DOWN");
 
+        MutexLockGuard lock(mutex_);
         if (conn->connected())
         {
             connections_.insert(conn);
@@ -113,6 +120,7 @@ private:
     {
         LOG_INFO << "onTextMessage: " << message->GetTypeName();
 
+        MutexLockGuard lock(mutex_);
         for (const auto &connection : connections_)
         {
             codec_.send(connection, *message);
@@ -131,7 +139,8 @@ private:
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
     std::unordered_map<std::string, std::string> users_; // Key: username, Value: password
-    std::unordered_set<TcpConnectionPtr> connections_;
+    MutexLock mutex_;
+    std::unordered_set<TcpConnectionPtr> connections_  GUARDED_BY(mutex_);
 };
 
 int main(int argc, char *argv[])
@@ -142,13 +151,16 @@ int main(int argc, char *argv[])
         uint16_t port = static_cast<uint16_t>(atoi(argv[1]));
         InetAddress listenAddr(port);
         EventLoop loop;
-
         ChatServer server(&loop, listenAddr);
+        if (argc > 2)
+        {
+        server.setThreadNum(atoi(argv[2]));
+        }
         server.start();
         loop.loop();
     }
     else
     {
-        printf("Usage: %s listen_port\n", argv[0]);
+        printf("Usage: %s listen_port  [thread_num]\n", argv[0]);
     }
 }
