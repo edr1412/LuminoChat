@@ -110,15 +110,15 @@ private:
                        const LoginResponsePtr &message,
                        Timestamp)
   {
-    LOG_INFO << "onLoginResponse: " << message->GetTypeName();
+    //LOG_INFO << "onLoginResponse: " << message->GetTypeName();
 
     if (message->success())
     {
-      LOG_INFO << "Login succeeded";
+      //LOG_INFO << "Login succeeded";
     }
     else
     {
-      LOG_ERROR << "Login failed: " << message->error_message();
+      //LOG_ERROR << "Login failed: " << message->error_message();
     }
   }
 
@@ -126,15 +126,15 @@ private:
                           const RegisterResponsePtr &message,
                           Timestamp)
   {
-    LOG_INFO << "onRegisterResponse: " << message->GetTypeName();
+    //LOG_INFO << "onRegisterResponse: " << message->GetTypeName();
 
     if (message->success())
     {
-      LOG_INFO << "Register succeeded";
+      //LOG_INFO << "Register succeeded";
     }
     else
     {
-      LOG_ERROR << "Register failed: " << message->error_message();
+      //LOG_ERROR << "Register failed: " << message->error_message();
     }
   }
 
@@ -142,12 +142,12 @@ private:
                       const SearchResponsePtr &message,
                       Timestamp)
 {
-  LOG_INFO << "onSearchResponse: " << message->GetTypeName();
-  printf(">>> Search Result:\n");
-  for (const auto &username : message->usernames())
-  {
-    printf(">>> - %s\n", username.c_str());
-  }
+  //LOG_INFO << "onSearchResponse: " << message->GetTypeName();
+//   printf(">>> Search Result:\n");
+//   for (const auto &username : message->usernames())
+//   {
+//     printf(">>> - %s\n", username.c_str());
+//   }
 }
 
   void onTextMessage(const TcpConnectionPtr &conn,
@@ -165,7 +165,7 @@ private:
                             const MessagePtr &message,
                             Timestamp)
   {
-    LOG_INFO << "onUnknownMessageType: " << message->GetTypeName();
+    //LOG_INFO << "onUnknownMessageType: " << message->GetTypeName();
     conn->shutdown();
   }
 
@@ -262,13 +262,29 @@ public:
             EventLoop* ioLoop  = threadPool_->getNextLoop();
             chatclients_.push_back(std::make_shared<ChatClient>(ioLoop, serverAddr_)); 
             chatclients_.back()->connect();
-            TimerId timerId = ioLoop->runEvery(
+            TimerId timerId0 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
                 std::bind(&ChatClient::send, chatclients_.back(), "send "+g_msgContent)
             );
             ioLoop->runAfter(
                 10, // 10s后结束发送
-                std::bind(&EventLoop::cancel, ioLoop, timerId)
+                std::bind(&EventLoop::cancel, ioLoop, timerId0)
+            );
+            TimerId timerId1 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "register "+g_msgContent)
+            );
+            ioLoop->runAfter(
+                10, // 10s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId1)
+            );
+            TimerId timerId2 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "search "+g_msgContent)
+            );
+            ioLoop->runAfter(
+                10, // 10s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId2)
             );
         }
     }
@@ -342,7 +358,7 @@ int main(int argc, char* argv[]){
     using namespace std::chrono_literals;
     CurrentThread::sleepUsec(11000*1000); // 11s后统计并断开连接
     multiClient.stop();
-    CurrentThread::sleepUsec(2000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
+    CurrentThread::sleepUsec(5000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
     return 0;
 }
 
