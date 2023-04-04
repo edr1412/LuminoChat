@@ -27,7 +27,8 @@ add_executable(chat_client client.cc)
 set_target_properties(chat_client PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
 target_link_libraries(chat_client protobuf_codec chat_proto)
 
-add_custom_target(chat_all
-                  DEPENDS
-                        chat_server
-                        chat_client)
+add_executable(chat_client_test client_test.cc)
+set_target_properties(chat_client_test PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
+target_link_libraries(chat_client_test protobuf_codec chat_proto)
+
+
