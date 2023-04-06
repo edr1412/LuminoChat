@@ -18,6 +18,7 @@ using namespace muduo;
 using namespace muduo::net;
 
 using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
+using LogoutRequestPtr = std::shared_ptr<chat::LogoutRequest>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using SearchRequestPtr = std::shared_ptr<chat::SearchRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
@@ -41,6 +42,8 @@ public:
     {
         dispatcher_.registerMessageCallback<chat::LoginRequest>(
             std::bind(&ChatServer::onLoginRequest, this, _1, _2, _3));
+        dispatcher_.registerMessageCallback<chat::LogoutRequest>(
+            std::bind(&ChatServer::onLogoutRequest, this, _1, _2, _3));
         dispatcher_.registerMessageCallback<chat::RegisterRequest>(
             std::bind(&ChatServer::onRegisterRequest, this, _1, _2, _3));
         dispatcher_.registerMessageCallback<chat::TextMessage>(
@@ -84,22 +87,8 @@ private:
         } 
         else 
         {
-            // 无需加锁
-            //LocalConnections::instance()[message->username()].erase(conn);
-            // 从LocalConnections::instance() 找到值的set中含有conn的键值对，然后删除set中的conn
-            for (auto &item : LocalConnections::instance()) {
-                if (item.second.find(conn) != item.second.end()) {
-                    std::string username = item.first;
-                    item.second.erase(conn);
-                    //如果当前用户没有连接了，就删除整个键值对，并从online_users_中删除
-                    if (LocalConnections::instance()[username].empty()) {
-                        LocalConnections::instance().erase(username);
-                        removeUserFromOnlineUsers(conn, username);
-                    }
-                    break;
-                }
-            }
-            
+            // 没有登录也可以安全调用 logout，因为会找不到conn就什么也不会做
+            logout(conn);
         }
     }
     void addUserToOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
@@ -151,9 +140,9 @@ private:
             if (!users.empty()) {
                 for (const auto &user : users) {
                     MutexLockGuard lock(online_users_mutex_);
-                    auto online_it = online_users_.find(user);
-                    if (online_it != online_users_.end()) {
-                        for (auto loop : online_it->second) {
+                    auto it = online_users_.find(user);
+                    if (it != online_users_.end()) {
+                        for (auto loop : it->second) {
                             loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
                         }
                     }
@@ -227,6 +216,7 @@ private:
 
         if (loginSuccess)
         {
+            response.set_username(message->username());
             response.set_success(true);
             response.set_error_message("");
             LocalConnections::instance()[message->username()].insert(conn);
@@ -234,12 +224,40 @@ private:
         }
         else
         {
+            response.set_username("guest");
             response.set_success(false);
             response.set_error_message("Invalid username or password.");
         }
 
         codec_.send(conn, response);
     }
+
+    void logout(const TcpConnectionPtr &conn)
+    {
+        // 无需加锁
+        // 从LocalConnections::instance() 找到值的set中含有conn的键值对，然后删除set中的conn
+        for (auto &item : LocalConnections::instance()) {
+            if (item.second.find(conn) != item.second.end()) {
+                std::string username = item.first;
+                item.second.erase(conn);
+                //如果当前用户没有连接了，就删除整个键值对，并从online_users_中删除
+                if (LocalConnections::instance()[username].empty()) {
+                    LocalConnections::instance().erase(username);
+                    removeUserFromOnlineUsers(conn, username);
+                }
+                break;
+            }
+        }
+    }
+
+    void onLogoutRequest(const TcpConnectionPtr &conn,
+                         const LogoutRequestPtr &message,
+                         Timestamp)
+    {
+        LOG_INFO << "onLogoutRequest: " << message->GetTypeName();
+        logout(conn);
+    }
+
 
     void onRegisterRequest(const TcpConnectionPtr &conn,
                            const RegisterRequestPtr &message,
@@ -249,6 +267,15 @@ private:
         
         chat::RegisterResponse response;
         std::pair<std::unordered_map<std::string, std::string>::iterator, bool> result;
+
+        //username不能是guest
+        if (message->username() == "guest")
+        {
+            response.set_success(false);
+            response.set_error_message("Invalid username.");
+            codec_.send(conn, response);
+            return;
+        }
 
         // write段修改对象，若引用计数为1，则可以直接修改，无需拷贝；若引用计数大于1，则启动copy-on-other-reading
         // 必须全程持锁

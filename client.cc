@@ -119,6 +119,7 @@ private:
     if (message->success())
     {
       LOG_INFO << "Login succeeded";
+      username_ = message->username();
     }
     else
     {
@@ -230,11 +231,21 @@ private:
     {
       std::string username, password;
       iss >> username >> password;
+      // 如果再次登录自己，则退出
+      if (username == username_) {
+          return;
+      }
+      // 如果已经登录，要登录其他用户，则先登出
+      if (username_ != "guest") {
+          chat::LogoutRequest request;
+          request.set_username(username_);
+          codec_.send(connection_, request);
+          username_ = "guest";
+      }
       chat::LoginRequest request;
       request.set_username(username);
       request.set_password(password);
       codec_.send(connection_, request);
-      username_ = username;
     }
     else if (cmd == "send")
     {
@@ -293,6 +304,17 @@ private:
         LOG_ERROR << "Unknown group operation: " << operation;
       }
       codec_.send(connection_, request);
+    }
+    else if (cmd == "logout")
+    {
+      if (username_ != "guest") {
+          chat::LogoutRequest request;
+          request.set_username(username_);
+          codec_.send(connection_, request);
+          username_ = "guest";
+      } else {
+          LOG_ERROR << "You are not logged in!";
+      }
     }
     else
     {

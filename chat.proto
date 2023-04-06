@@ -25,8 +25,13 @@ message LoginRequest {
 }
 
 message LoginResponse {
-  bool success = 1;
-  string error_message = 2;
+  string username = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message LogoutRequest {
+  string username = 1;
 }
 
 message RegisterRequest {
