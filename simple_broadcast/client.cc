@@ -19,12 +19,10 @@ using namespace muduo::net;
 
 using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
-using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using LoginResponsePtr = std::shared_ptr<chat::LoginResponse>;
 using RegisterResponsePtr = std::shared_ptr<chat::RegisterResponse>;
 using SearchResponsePtr = std::shared_ptr<chat::SearchResponse>;
-using GroupResponsePtr = std::shared_ptr<chat::GroupResponse>;
 
 class ChatClient
 {
@@ -44,8 +42,6 @@ public:
         std::bind(&ChatClient::onTextMessage, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::SearchResponse>(
       std::bind(&ChatClient::onSearchResponse, this, _1, _2, _3));
-    dispatcher_.registerMessageCallback<chat::GroupResponse>(
-      std::bind(&ChatClient::onGroupResponse, this, _1, _2, _3));
     client_.setConnectionCallback(
         std::bind(&ChatClient::onConnection, this, _1));
     client_.setMessageCallback(
@@ -124,48 +120,16 @@ private:
   }
 
   void onSearchResponse(const TcpConnectionPtr &conn,
-                        const SearchResponsePtr &message,
-                        Timestamp)
+                      const SearchResponsePtr &message,
+                      Timestamp)
+{
+  LOG_INFO << "onSearchResponse: " << message->GetTypeName();
+  printf(">>> Search Result:\n");
+  for (const auto &username : message->usernames())
   {
-    LOG_INFO << "onSearchResponse: " << message->GetTypeName();
-    printf(">>> Search Result:\n");
-    for (const auto &username : message->usernames())
-    {
-      printf(">>> - %s\n", username.c_str());
-    }
+    printf(">>> - %s\n", username.c_str());
   }
-
-  void onGroupResponse(const TcpConnectionPtr &conn,
-                        const GroupResponsePtr &message,
-                        Timestamp)
-  {
-    LOG_INFO << "onGroupResponse: " << message->GetTypeName();
-
-    if (message->success())
-    {
-        std::string operation;
-        switch (message->operation()) {
-            case chat::GroupOperation::CREATE:
-                operation = "Create group";
-                break;
-            case chat::GroupOperation::JOIN:
-                operation = "Join group";
-                break;
-            case chat::GroupOperation::LEAVE:
-                operation = "Leave group";
-                break;
-            default:
-                operation = "Unknown command";
-                break;
-        }
-        LOG_INFO << operation << " succeeded";
-    }
-    else
-    {
-        LOG_ERROR << "Group operation failed: " << message->error_message();
-    }
-  }
-
+}
 
   void onTextMessage(const TcpConnectionPtr &conn,
                      const TextMessagePtr &message,
@@ -173,15 +137,7 @@ private:
   {
     LOG_INFO << "onTextMessage: " << message->GetTypeName();
     //LOG_INFO << "From: " << message->sender() << ", Message: " << message->content();
-    std::string group;
-    if (message->target_type() == chat::TargetType::USER){
-        group = "private";
-    } 
-    else if (message->target_type() == chat::TargetType::GROUP)
-    {
-        group = message->target();
-    }
-    printf("<<< %s [%s] %s\n", group.c_str(), message->sender().c_str(), message->content().c_str());
+    printf("<<< [%s] %s\n", message->sender().c_str(), message->content().c_str());
   }
 
   void onUnknownMessageType(const TcpConnectionPtr &conn,
@@ -219,20 +175,11 @@ private:
     }
     else if (cmd == "send")
     {
-      std::string target_type, target, content;
-      iss >> target_type >> target >> content;
+      std::string message;
+      std::getline(iss, message);
       chat::TextMessage textMessage;
       textMessage.set_sender(username_);
-      textMessage.set_content(content);
-      if (target_type == "user")
-      {
-        textMessage.set_target_type(chat::TargetType::USER);
-      }
-      else if (target_type == "group")
-      {
-        textMessage.set_target_type(chat::TargetType::GROUP);
-      }
-      textMessage.set_target(target);
+      textMessage.set_content(message);
       codec_.send(connection_, textMessage);
     }
     else if (cmd == "search")
@@ -241,32 +188,6 @@ private:
       iss >> keyword;
       chat::SearchRequest request;
       request.set_keyword(keyword);
-      codec_.send(connection_, request);
-    }
-    else if (cmd == "group")
-    {
-      std::string operation, group_name;
-      iss >> operation >> group_name;
-      chat::GroupRequest request;
-      request.set_group_name(group_name);
-      request.set_username(username_);
-
-      if (operation == "create")
-      {
-        request.set_operation(chat::GroupOperation::CREATE);
-      }
-      else if (operation == "join")
-      {
-        request.set_operation(chat::GroupOperation::JOIN);
-      }
-      else if (operation == "leave")
-      {
-        request.set_operation(chat::GroupOperation::LEAVE);
-      }
-      else
-      {
-        LOG_ERROR << "Unknown group operation: " << operation;
-      }
       codec_.send(connection_, request);
     }
     else
