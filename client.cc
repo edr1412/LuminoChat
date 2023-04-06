@@ -21,6 +21,7 @@ using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
+using TextMessageResponsePtr = std::shared_ptr<chat::TextMessageResponse>;
 using LoginResponsePtr = std::shared_ptr<chat::LoginResponse>;
 using RegisterResponsePtr = std::shared_ptr<chat::RegisterResponse>;
 using SearchResponsePtr = std::shared_ptr<chat::SearchResponse>;
@@ -42,6 +43,8 @@ public:
         std::bind(&ChatClient::onRegisterResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::TextMessage>(
         std::bind(&ChatClient::onTextMessage, this, _1, _2, _3));
+    dispatcher_.registerMessageCallback<chat::TextMessageResponse>(
+      std::bind(&ChatClient::onTextMessageResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::SearchResponse>(
       std::bind(&ChatClient::onSearchResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::GroupResponse>(
@@ -89,6 +92,22 @@ private:
     {
       connection_.reset();
     }
+  }
+
+  void onTextMessageResponse(const TcpConnectionPtr &conn,
+                            const TextMessageResponsePtr &message,
+                            Timestamp)
+  {
+      LOG_INFO << "onTextMessageResponse: " << message->GetTypeName();
+
+      if (message->success())
+      {
+          LOG_INFO << "Message sent successfully";
+      }
+      else
+      {
+          LOG_ERROR << "Failed to send message: " << message->error_message();
+      }
   }
 
   void onLoginResponse(const TcpConnectionPtr &conn,
@@ -231,6 +250,12 @@ private:
       else if (target_type == "group")
       {
         textMessage.set_target_type(chat::TargetType::GROUP);
+      }
+      else
+      {
+        LOG_ERROR << "Unknown target type: " << target_type;
+        LOG_INFO << "Usage: send <user|group> <target> <content>";
+        return;
       }
       textMessage.set_target(target);
       codec_.send(connection_, textMessage);

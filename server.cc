@@ -116,20 +116,25 @@ private:
     }
 
     void onTextMessage(const TcpConnectionPtr &conn,
-                   const TextMessagePtr &message,
-                   Timestamp) 
+                    const TextMessagePtr &message,
+                    Timestamp)
     {
         LOG_INFO << "onTextMessage: " << message->GetTypeName();
 
+        bool is_sent = false;
+        std::string error_msg;
+
         if (message->target_type() == chat::TargetType::USER) {
             // 私聊
-            // FIXME: 锁的粒度太大
             MutexLockGuard lock(online_users_mutex_);
             auto it = online_users_.find(message->target());
             if (it != online_users_.end()) {
                 for (auto loop : it->second) {
                     loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, message->target(), message));
                 }
+                is_sent = true;
+            } else {
+                error_msg = "Target user not found or is offline.";
             }
         } 
         else if (message->target_type() == chat::TargetType::GROUP) 
@@ -153,9 +158,21 @@ private:
                         }
                     }
                 }
+                is_sent = true;
+            } else {
+                error_msg = "Target group not found";
             }
+        } else {
+            error_msg = "Invalid target type";
         }
+
+        // 创建并发送 TextMessageResponse
+        chat::TextMessageResponse response;
+        response.set_success(is_sent);
+        response.set_error_message(error_msg);
+        codec_.send(conn, response);
     }
+
 
     void sendTextMessage(const std::string &target, const TextMessagePtr &message) {
         // 在自己的 loop thread 中执行，无需加锁
