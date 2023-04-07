@@ -16,6 +16,12 @@
 #include <sstream>
 #include <unistd.h>
 
+#include <random>
+int g_usrNum;
+int g_threadNum;
+int g_nameLen;
+int g_msgLen;
+
 using namespace muduo;
 using namespace muduo::net;
 
@@ -137,11 +143,12 @@ private:
 
     if (message->success())
     {
-      //LOG_INFO << "Login succeeded";
+      // LOG_INFO << "Login succeeded";
+      username_ = message->username();
     }
     else
     {
-      //LOG_ERROR << "Login failed: " << message->error_message();
+      // LOG_ERROR << "Login failed: " << message->error_message();
     }
   }
 
@@ -231,6 +238,63 @@ private:
     conn->shutdown();
   }
 
+  std::string random_string(size_t len) {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 25);
+
+    std::string str("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    std::string newstr;
+    for (size_t i = 0; i < len; i++) {
+        int pos = dis(gen);
+        newstr += str[pos];
+    }
+    return newstr;
+  }
+
+  //随机返回"user"或"group"
+  std::string random_target_type() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 1);
+
+    std::string str("user");
+    std::string newstr;
+    for (size_t i = 0; i < 1; i++) {
+        int pos = dis(gen);
+        if(pos == 0){
+          newstr = "user";
+        }
+        else{
+          newstr = "group";
+        }
+    }
+    return newstr;
+  }
+
+  //随机返回"create"或"join"或"leave"
+  std::string random_group_operation() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 2);
+
+    std::string str("create");
+    std::string newstr;
+    for (size_t i = 0; i < 1; i++) {
+        int pos = dis(gen);
+        if(pos == 0){
+          newstr = "create";
+        }
+        else if(pos == 1){
+          newstr = "join";
+        }
+        else{
+          newstr = "leave";
+        }
+    }
+    return newstr;
+  }
+
   void processCommand(const std::string &line)
   {
     std::istringstream iss(line);
@@ -239,6 +303,8 @@ private:
 
     if (cmd == "register")
     {
+      std::string randomline = random_string(g_nameLen)+ " 1";
+      iss = std::istringstream(randomline);
       std::string username, password;
       iss >> username >> password;
       chat::RegisterRequest request;
@@ -248,16 +314,30 @@ private:
     }
     else if (cmd == "login")
     {
+      std::string randomline = random_string(g_nameLen)+ " 1";
+      iss = std::istringstream(randomline);
       std::string username, password;
       iss >> username >> password;
+      // 如果再次登录自己，则退出
+      if (username == username_) {
+          return;
+      }
+      // 如果已经登录，要登录其他用户，则先登出
+      if (username_ != "guest") {
+          chat::LogoutRequest request;
+          request.set_username(username_);
+          codec_.send(connection_, request);
+          username_ = "guest";
+      }
       chat::LoginRequest request;
       request.set_username(username);
       request.set_password(password);
       codec_.send(connection_, request);
-      username_ = username;
     }
     else if (cmd == "send")
     {
+      std::string randomline = random_target_type() + " " + random_string(g_nameLen)+ " " + random_string(g_msgLen);
+      iss = std::istringstream(randomline);
       std::string target_type, target, content;
       iss >> target_type >> target >> content;
       chat::TextMessage textMessage;
@@ -284,6 +364,8 @@ private:
     }
     else if (cmd == "search")
     {
+      std::string randomline = random_string(g_nameLen);
+      iss = std::istringstream(randomline);
       std::string keyword;
       iss >> keyword;
       chat::SearchRequest request;
@@ -292,6 +374,8 @@ private:
     }
     else if (cmd == "group")
     {
+      std::string randomline = random_group_operation() + " " + random_string(g_nameLen);
+      iss = std::istringstream(randomline);
       std::string operation, group_name;
       iss >> operation >> group_name;
       chat::GroupRequest request;
@@ -316,6 +400,17 @@ private:
       }
       codec_.send(connection_, request);
     }
+    else if (cmd == "logout")
+    {
+      if (username_ != "guest") {
+          chat::LogoutRequest request;
+          request.set_username(username_);
+          codec_.send(connection_, request);
+          username_ = "guest";
+      } else {
+          LOG_ERROR << "You are not logged in!";
+      }
+    }
     else
     {
       LOG_ERROR << "Unknown command: " << cmd;
@@ -336,11 +431,7 @@ private:
 };
 
 
-#include <random>
-int g_usrNum;
-int g_threadNum;
-int g_msgLen;
-std::string g_msgContent;
+
 class ChatMultiClient{
 public:
     ChatMultiClient(EventLoop* loop, InetAddress serverAddr, int userNum)
@@ -365,29 +456,51 @@ public:
             EventLoop* ioLoop  = threadPool_->getNextLoop();
             chatclients_.push_back(std::make_shared<ChatClient>(ioLoop, serverAddr_)); 
             chatclients_.back()->connect();
+
             TimerId timerId0 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "send "+g_msgContent)
+                std::bind(&ChatClient::send, chatclients_.back(), "register")
             );
             ioLoop->runAfter(
-                10, // 10s后结束发送
+                20, // 20s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId0)
             );
+
             TimerId timerId1 = ioLoop->runEvery(
-               dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "register "+g_msgContent)
+              // dis_(gen_), //随机的时间
+                2, 
+                std::bind(&ChatClient::send, chatclients_.back(), "login")
             );
             ioLoop->runAfter(
-                10, // 10s后结束发送
+                20, // 20s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId1)
             );
+            
             TimerId timerId2 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "search "+g_msgContent)
+                std::bind(&ChatClient::send, chatclients_.back(), "send")
             );
             ioLoop->runAfter(
-                10, // 10s后结束发送
+                20, // 20s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId2)
+            );
+
+            TimerId timerId4 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "group")
+            );
+            ioLoop->runAfter(
+                20, // 20s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId4)
+            );
+
+            TimerId timerId7 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "search")
+            );
+            ioLoop->runAfter(
+                20, // 20s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId7)
             );
         }
     }
@@ -444,13 +557,13 @@ private:
 
 int main(int argc, char* argv[]){
     if(argc < 4){
-        printf("Usage: <%s> <Server IP> <Port> <userNum> <threadNum = 1> <msgLen = 128>", argv[0]);
+        printf("Usage: <%s> <Server IP> <Port> <userNum> <threadNum = 1> <nameLen = 2> <msgLen = 10>", argv[0]);
         exit(-1);
     }
     g_usrNum = atoi(argv[3]);
     g_threadNum = (argc >= 5) ? atoi(argv[4]) : 1;
-    g_msgLen = (argc >= 6) ? atoi(argv[5]) : 128;
-    g_msgContent = std::string(g_msgLen, 'S');
+    g_nameLen = (argc >= 6) ? atoi(argv[5]) : 2;
+    g_msgLen = (argc >= 7) ? atoi(argv[6]) : 10;
 
     EventLoop loop;
     InetAddress serverAddr(argv[1], atoi(argv[2]));
@@ -459,9 +572,9 @@ int main(int argc, char* argv[]){
     multiClient.start();
 
     using namespace std::chrono_literals;
-    CurrentThread::sleepUsec(11000*1000); // 11s后统计并断开连接
+    CurrentThread::sleepUsec(21000*1000); // 21s后统计并断开连接
     multiClient.stop();
-    CurrentThread::sleepUsec(5000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
+    CurrentThread::sleepUsec(15000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
     return 0;
 }
 

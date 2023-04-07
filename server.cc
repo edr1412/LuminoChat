@@ -192,7 +192,7 @@ private:
     {
         LOG_INFO << "onLoginRequest: " << message->GetTypeName();
         chat::LoginResponse response;
-        bool loginSuccess = false;
+        bool userExists = true;
         std::string storedPassword;
 
         // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
@@ -206,15 +206,14 @@ private:
             {
                 storedPassword = it->second;
             }
+            else
+            {
+                userExists = false;
+            }
         }
 
 
-        if (storedPassword == message->password())
-        {
-            loginSuccess = true;
-        }
-
-        if (loginSuccess)
+        if (userExists && storedPassword == message->password())
         {
             response.set_username(message->username());
             response.set_success(true);
