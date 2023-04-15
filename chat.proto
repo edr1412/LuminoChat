@@ -5,6 +5,18 @@ package chat;
 message TextMessage {
   string sender = 1;
   string content = 2;
+  string target = 3;
+  TargetType target_type = 4;
+}
+
+enum TargetType {
+  USER = 0;
+  GROUP = 1;
+}
+
+message TextMessageResponse {
+  bool success = 1;
+  string error_message = 2;
 }
 
 message LoginRequest {
@@ -13,8 +25,13 @@ message LoginRequest {
 }
 
 message LoginResponse {
-  bool success = 1;
-  string error_message = 2;
+  string username = 1;
+  bool success = 2;
+  string error_message = 3;
+}
+
+message LogoutRequest {
+  string username = 1;
 }
 
 message RegisterRequest {
@@ -33,4 +50,22 @@ message SearchRequest {
 
 message SearchResponse {
   repeated string usernames = 1;
+}
+
+enum GroupOperation {
+  CREATE = 0;
+  JOIN = 1;
+  LEAVE = 2;
+}
+
+message GroupRequest {
+  GroupOperation operation = 1;
+  string group_name = 2;
+  string username = 3;
+}
+
+message GroupResponse {
+  GroupOperation operation = 1;
+  bool success = 2;
+  string error_message = 3;
 }
