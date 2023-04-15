@@ -281,6 +281,11 @@ private:
     }
     else if (cmd == "group")
     {
+      // 如果还没有登录，则不能操作群组
+      if (username_ == "guest") {
+        LOG_ERROR << "Please login first";
+        return;
+      }
       std::string operation, group_name;
       iss >> operation >> group_name;
       chat::GroupRequest request;

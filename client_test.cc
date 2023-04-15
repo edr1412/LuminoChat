@@ -374,6 +374,10 @@ private:
     }
     else if (cmd == "group")
     {
+      // 如果还没有登录，则不能操作群组
+      if (username_ == "guest") {
+          return;
+      }
       std::string randomline = random_group_operation() + " " + random_string(g_nameLen);
       iss = std::istringstream(randomline);
       std::string operation, group_name;
@@ -572,9 +576,9 @@ int main(int argc, char* argv[]){
     multiClient.start();
 
     using namespace std::chrono_literals;
-    CurrentThread::sleepUsec(21000*1000); // 21s后统计并断开连接
+    CurrentThread::sleepUsec(22000*1000); // 22s后统计并断开连接
     multiClient.stop();
-    CurrentThread::sleepUsec(15000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
+    CurrentThread::sleepUsec(25000*1000); // wait for disconnect, then safe to destruct LogClient (esp. TcpClient). Otherwise mutex_ is used after dtor.
     return 0;
 }
 
