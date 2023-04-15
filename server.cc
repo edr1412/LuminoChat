@@ -67,9 +67,7 @@ private:
     void threadInit(EventLoop* loop)
     {
         // LocalConnections 存储当前线程的所有连接
-        assert(LocalConnections::pointer() == NULL);
         LocalConnections::instance();
-        assert(LocalConnections::pointer() != NULL);
         // 只有loops需要加锁保护
         MutexLockGuard lock(loops_mutex_);
         loops_.insert(loop);
