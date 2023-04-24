@@ -309,6 +309,7 @@ private:
             UserMapPtr users_ptr = getUsersPtr();
             // users_ptr 一旦拿到，就不再需要锁了
             // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
+            MutexLockGuard lock(users_mutex_); // 但是这里还是需要锁一下，遍历users_ptr_ 会引发data race，原因不明
             for (const auto &user : *users_ptr)
             {
                 if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
