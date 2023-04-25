@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <map>
 #include <unordered_set>
 #include <string>
 #include <memory>
@@ -25,7 +26,7 @@ using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
 using ConnectionMap = std::unordered_map<std::string, std::unordered_set<TcpConnectionPtr>>;
 using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
-using UserMap = std::unordered_map<std::string, std::string>;
+using UserMap = std::map<std::string, std::string>; //若用unordered_map，会导致copy-on-write保证线程安全失效，出现data race，原因暂时不明
 using UserMapPtr = std::shared_ptr<UserMap>;
 using OnlineUserMap = std::unordered_map<std::string, std::unordered_set<EventLoop*>>;
 using GroupMap = std::unordered_map<std::string, std::unordered_set<std::string>>;
@@ -257,7 +258,7 @@ private:
         LOG_INFO << "onRegisterRequest: " << message->GetTypeName();
         
         chat::RegisterResponse response;
-        std::pair<std::unordered_map<std::string, std::string>::iterator, bool> result;
+        std::pair<std::map<std::string, std::string>::iterator, bool> result;
 
         //username不能是guest
         if (message->username() == "guest")
@@ -309,7 +310,6 @@ private:
             UserMapPtr users_ptr = getUsersPtr();
             // users_ptr 一旦拿到，就不再需要锁了
             // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
-            MutexLockGuard lock(users_mutex_); // 但是这里还是需要锁一下，遍历users_ptr_ 会引发data race，原因不明
             for (const auto &user : *users_ptr)
             {
                 if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
