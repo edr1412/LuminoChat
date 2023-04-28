@@ -474,7 +474,7 @@ public:
                 std::bind(&ChatClient::send, chatclients_.back(), "register")
             );
             ioLoop->runAfter(
-                20, // 20s后结束发送
+                7, // 7s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId0)
             );
 
@@ -490,39 +490,57 @@ public:
             
             TimerId timerId2 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "group")
+            );
+            ioLoop->runAfter(
+                10, // 10s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId2)
+            );
+
+            TimerId timerId3 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
                 std::bind(&ChatClient::send, chatclients_.back(), "send")
             );
             ioLoop->runAfter(
                 20, // 20s后结束发送
-                std::bind(&EventLoop::cancel, ioLoop, timerId2)
+                std::bind(&EventLoop::cancel, ioLoop, timerId3)
             );
 
             TimerId timerId4 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "group")
+                std::bind(&ChatClient::send, chatclients_.back(), "send")
             );
             ioLoop->runAfter(
                 20, // 20s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId4)
             );
 
-            TimerId timerId7 = ioLoop->runEvery(
+            TimerId timerId5 = ioLoop->runEvery(
                dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "search")
+                std::bind(&ChatClient::send, chatclients_.back(), "send")
             );
             ioLoop->runAfter(
                 20, // 20s后结束发送
-                std::bind(&EventLoop::cancel, ioLoop, timerId7)
+                std::bind(&EventLoop::cancel, ioLoop, timerId5)
             );
 
-            TimerId timerId8 = ioLoop->runEvery(
-               dis_(gen_), //随机的时间
-                std::bind(&ChatClient::send, chatclients_.back(), "search-online")
-            );
-            ioLoop->runAfter(
-                20, // 20s后结束发送
-                std::bind(&EventLoop::cancel, ioLoop, timerId8)
-            );
+            // TimerId timerId7 = ioLoop->runEvery(
+            //    dis_(gen_), //随机的时间
+            //     std::bind(&ChatClient::send, chatclients_.back(), "search")
+            // );
+            // ioLoop->runAfter(
+            //     20, // 20s后结束发送
+            //     std::bind(&EventLoop::cancel, ioLoop, timerId7)
+            // );
+
+            // TimerId timerId8 = ioLoop->runEvery(
+            //    dis_(gen_), //随机的时间
+            //     std::bind(&ChatClient::send, chatclients_.back(), "search-online")
+            // );
+            // ioLoop->runAfter(
+            //     20, // 20s后结束发送
+            //     std::bind(&EventLoop::cancel, ioLoop, timerId8)
+            // );
         }
     }
 
