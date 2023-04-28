@@ -93,7 +93,7 @@ private:
     }
     void removeUserFromOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
         MutexLockGuard lock(online_users_mutex_);
-        auto loop_set = online_users_[username];
+        auto& loop_set = online_users_[username];
         loop_set.erase(conn->getLoop());
         if (loop_set.empty()) {
             online_users_.erase(username);
@@ -111,11 +111,12 @@ private:
 
         if (message->target_type() == chat::TargetType::USER) {
             // 私聊
+            std::string user = message->target();
             MutexLockGuard lock(online_users_mutex_);
-            auto it = online_users_.find(message->target());
+            auto it = online_users_.find(user);
             if (it != online_users_.end()) {
                 for (auto loop : it->second) {
-                    loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, message->target(), message));
+                    loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
                 }
                 is_sent = true;
             } else {
@@ -308,6 +309,18 @@ private:
         LOG_INFO << "onSearchRequest: " << message->GetTypeName();
         chat::SearchResponse response;
 
+        if (message->online_only()) 
+        {
+            MutexLockGuard lock(online_users_mutex_);
+            for (const auto &user : online_users_)
+            {
+                if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
+                {
+                    response.add_usernames(user.first);
+                }
+            }
+        }
+        else
         // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
         {
             UserMapPtr users_ptr = getUsersPtr();

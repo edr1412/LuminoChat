@@ -277,6 +277,16 @@ private:
       iss >> keyword;
       chat::SearchRequest request;
       request.set_keyword(keyword);
+      request.set_online_only(false);
+      codec_.send(connection_, request);
+    }
+    else if (cmd == "search-online")
+    {
+      std::string keyword;
+      iss >> keyword;
+      chat::SearchRequest request;
+      request.set_keyword(keyword);
+      request.set_online_only(true);
       codec_.send(connection_, request);
     }
     else if (cmd == "group")

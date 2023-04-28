@@ -364,12 +364,20 @@ private:
     }
     else if (cmd == "search")
     {
-      std::string randomline = random_string(g_nameLen);
-      iss = std::istringstream(randomline);
       std::string keyword;
       iss >> keyword;
       chat::SearchRequest request;
       request.set_keyword(keyword);
+      request.set_online_only(false);
+      codec_.send(connection_, request);
+    }
+    else if (cmd == "search-online")
+    {
+      std::string keyword;
+      iss >> keyword;
+      chat::SearchRequest request;
+      request.set_keyword(keyword);
+      request.set_online_only(true);
       codec_.send(connection_, request);
     }
     else if (cmd == "group")
@@ -505,6 +513,15 @@ public:
             ioLoop->runAfter(
                 20, // 20s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId7)
+            );
+
+            TimerId timerId8 = ioLoop->runEvery(
+               dis_(gen_), //随机的时间
+                std::bind(&ChatClient::send, chatclients_.back(), "search-online")
+            );
+            ioLoop->runAfter(
+                20, // 20s后结束发送
+                std::bind(&EventLoop::cancel, ioLoop, timerId8)
             );
         }
     }

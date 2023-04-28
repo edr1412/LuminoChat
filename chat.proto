@@ -46,6 +46,7 @@ message RegisterResponse {
 
 message SearchRequest {
   string keyword = 1;
+  bool online_only = 2;
 }
 
 message SearchResponse {
