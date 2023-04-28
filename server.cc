@@ -24,11 +24,14 @@ using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using SearchRequestPtr = std::shared_ptr<chat::SearchRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
-using ConnectionMap = std::unordered_map<std::string, std::unordered_set<TcpConnectionPtr>>;
-using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
-using UserMap = std::map<std::string, std::string>; //若用unordered_map，会导致copy-on-write保证线程安全失效，出现data race，原因暂时不明
+//若用unordered_map，会导致copy-on-write保证线程安全失效，出现data race，原因暂时不明
+using UserMap = std::map<std::string, std::string>; 
 using UserMapPtr = std::shared_ptr<UserMap>;
-using OnlineUserMap = std::unordered_map<std::string, std::unordered_set<EventLoop*>>;
+using OnlineUserMap = std::unordered_map<std::string, std::unordered_set<EventLoop*>>; // 一个用户可能在多个EventLoop中在线
+using ConnectionMap = std::unordered_map<std::string,
+    std::unordered_set<TcpConnectionPtr>>;  // 即使在同一个EventLoop中，
+                                            //一个用户也可能有多个连接
+using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
 using GroupMap = std::unordered_map<std::string, std::unordered_set<std::string>>;
 
 
