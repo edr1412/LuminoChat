@@ -14,6 +14,7 @@
 #include <string>
 #include <memory>
 #include <unistd.h>
+#include <hiredis/hiredis.h>
 
 using namespace muduo;
 using namespace muduo::net;
@@ -24,16 +25,14 @@ using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using SearchRequestPtr = std::shared_ptr<chat::SearchRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
-//若用unordered_map，会导致copy-on-write保证线程安全失效，出现data race，原因暂时不明
-using UserMap = std::map<std::string, std::string>; 
-using UserMapPtr = std::shared_ptr<UserMap>;
+
 using OnlineUserMap = std::unordered_map<std::string, std::unordered_set<EventLoop*>>; // 一个用户可能在多个EventLoop中在线
 using ConnectionMap = std::unordered_map<std::string,
     std::unordered_set<TcpConnectionPtr>>;  // 即使在同一个EventLoop中，
                                             //一个用户也可能有多个连接
 using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
-using GroupMap = std::unordered_map<std::string, std::unordered_set<std::string>>;
 
+thread_local redisContext *redis_ctx_ = nullptr;
 
 class ChatServer
 {
@@ -41,8 +40,7 @@ public:
     ChatServer(EventLoop *loop, const InetAddress &listenAddr)
         : server_(loop, listenAddr, "ChatServer"),
           dispatcher_(std::bind(&ChatServer::onUnknownMessageType, this, _1, _2, _3)),
-          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3)),
-          users_ptr_(new UserMap)
+          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3))
     {
         dispatcher_.registerMessageCallback<chat::LoginRequest>(
             std::bind(&ChatServer::onLoginRequest, this, _1, _2, _3));
@@ -62,8 +60,18 @@ public:
             std::bind(&ProtobufCodec::onMessage, &codec_, _1, _2, _3));
     }
 
+    ~ChatServer()
+    {
+        for (auto loop : loops_)
+        {
+            loop->queueInLoop(std::bind(&ChatServer::cleanupRedisContext, this));
+        }
+        
+    }
+
     void start()
     {
+        server_.setThreadInitCallback(std::bind(&ChatServer::threadInit, this, _1));
         server_.start();
     }
 
@@ -74,7 +82,34 @@ public:
 
 
 private:
-
+    void initRedisContext()
+    {
+        if (!redis_ctx_)
+        {
+            redis_ctx_ = redisConnect("127.0.0.1", 6379);
+            if (redis_ctx_->err)
+            {
+                LOG_ERROR << "Redis connection error: " << redis_ctx_->errstr;
+                redisFree(redis_ctx_);
+                redis_ctx_ = nullptr;
+                return;
+            }
+        }
+    }
+    void cleanupRedisContext()
+    {
+        if (redis_ctx_)
+        {
+            redisFree(redis_ctx_);
+            redis_ctx_ = nullptr;
+        }
+    }
+    void threadInit(EventLoop* loop)
+    {
+        initRedisContext();
+        MutexLockGuard lock(loops_mutex_);
+        loops_.insert(loop);
+    }
     void onConnection(const TcpConnectionPtr &conn) {
         LOG_INFO << "ChatServer - " << conn->peerAddress().toIpPort() << " -> "
                     << conn->localAddress().toIpPort() << " is "
@@ -109,46 +144,54 @@ private:
         bool is_sent = false;
         std::string error_msg;
 
-        if (message->target_type() == chat::TargetType::USER) {
+        if (message->target_type() == chat::TargetType::USER)
+        {
             // 私聊
             std::string user = message->target();
             MutexLockGuard lock(online_users_mutex_);
             auto it = online_users_.find(user);
-            if (it != online_users_.end()) {
-                for (auto loop : it->second) {
+            if (it != online_users_.end())
+            {
+                for (auto loop : it->second)
+                {
                     loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
                 }
                 is_sent = true;
-            } else {
+            }
+            else
+            {
                 error_msg = "Target user not found or is offline.";
             }
-        } 
-        else if (message->target_type() == chat::TargetType::GROUP) 
+        }
+        else if (message->target_type() == chat::TargetType::GROUP)
         {
             // 群聊
-            std::unordered_set<std::string> users;
+            redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s", message->target().c_str());
+            if (reply->type == REDIS_REPLY_ARRAY)
             {
-                MutexLockGuard lock(groups_mutex_);
-                auto group_it = groups_.find(message->target());
-                if (group_it != groups_.end()) {
-                    users = group_it->second;
-                }
-            }
-            if (!users.empty()) {
-                for (const auto &user : users) {
+                for (size_t i = 0; i < reply->elements; i++)
+                {
+                    std::string user = reply->element[i]->str;
                     MutexLockGuard lock(online_users_mutex_);
                     auto it = online_users_.find(user);
-                    if (it != online_users_.end()) {
-                        for (auto loop : it->second) {
+                    if (it != online_users_.end())
+                    {
+                        for (auto loop : it->second)
+                        {
                             loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
                         }
                     }
                 }
                 is_sent = true;
-            } else {
+            }
+            else
+            {
                 error_msg = "Target group not found";
             }
-        } else {
+            freeReplyObject(reply);
+        }
+        else
+        {
             error_msg = "Invalid target type";
         }
 
@@ -184,33 +227,23 @@ private:
     // }
 
     void onLoginRequest(const TcpConnectionPtr &conn,
-                        const LoginRequestPtr &message,
-                        Timestamp)
+                    const LoginRequestPtr &message,
+                    Timestamp)
     {
         LOG_INFO << "onLoginRequest: " << message->GetTypeName();
         chat::LoginResponse response;
-        bool userExists = true;
         std::string storedPassword;
 
-        // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
+        // 获取存储在 Redis 中的密码
+        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "HGET users %s", message->username().c_str());
+        if (reply->type != REDIS_REPLY_NIL)
         {
-            UserMapPtr users_ptr = getUsersPtr();
-            // users_ptr 一旦拿到，就不再需要锁了
-            // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
-
-            auto it = users_ptr->find(message->username());
-            if (it != users_ptr->end())
-            {
-                storedPassword = it->second;
-            }
-            else
-            {
-                userExists = false;
-            }
+            storedPassword = reply->str;
         }
 
+        freeReplyObject(reply);
 
-        if (userExists && storedPassword == message->password())
+        if (!storedPassword.empty() && storedPassword == message->password())
         {
             response.set_username(message->username());
             response.set_success(true);
@@ -256,14 +289,12 @@ private:
 
 
     void onRegisterRequest(const TcpConnectionPtr &conn,
-                           const RegisterRequestPtr &message,
-                           Timestamp)
+                        const RegisterRequestPtr &message,
+                        Timestamp)
     {
         LOG_INFO << "onRegisterRequest: " << message->GetTypeName();
-        
-        chat::RegisterResponse response;
-        std::pair<std::map<std::string, std::string>::iterator, bool> result;
 
+        chat::RegisterResponse response;
         //username不能是guest
         if (message->username() == "guest")
         {
@@ -272,23 +303,12 @@ private:
             codec_.send(conn, response);
             return;
         }
+        // 使用 HSETNX 命令在 Redis 中添加用户信息
+        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "HSETNX users %s %s", message->username().c_str(), message->password().c_str());
+        bool userAdded = reply->integer == 1;
+        freeReplyObject(reply);
 
-        // write段修改对象，若引用计数为1，则可以直接修改，无需拷贝；若引用计数大于1，则启动copy-on-other-reading
-        // 必须全程持锁
-        {
-            MutexLockGuard lock(users_mutex_);
-            // 如果引用计数大于1，说明这时候其他线程正在读，那么不能在原来的数据上修改，得把users_ptr_替换为新副本，然后再修改。这可能让那些线程读到旧数据，但比起网络延迟可以忽略不计。
-            if (!users_ptr_.unique())
-            {
-                users_ptr_.reset(new UserMap(*users_ptr_));
-            }
-            // 如果引用计数为1，说明没有用户在读，那么就能安全地修改共享对象，节约一次Map拷贝。实测99%的情况下，可以节约一次拷贝。
-            assert(users_ptr_.unique());
-            result = users_ptr_->emplace(message->username(), message->password());
-        }
-
-
-        if (result.second)
+        if (userAdded)
         {
             response.set_success(true);
             response.set_error_message("");
@@ -303,12 +323,11 @@ private:
     }
 
     void onSearchRequest(const TcpConnectionPtr &conn,
-                     const SearchRequestPtr &message,
-                     Timestamp)
+                        const SearchRequestPtr &message,
+                        Timestamp)
     {
         LOG_INFO << "onSearchRequest: " << message->GetTypeName();
         chat::SearchResponse response;
-
         if (message->online_only()) 
         {
             MutexLockGuard lock(online_users_mutex_);
@@ -321,22 +340,27 @@ private:
             }
         }
         else
-        // 对于read端，在读之前把引用计数加1，读完之后减1，这样保证在读的期间其引用计数大于1
         {
-            UserMapPtr users_ptr = getUsersPtr();
-            // users_ptr 一旦拿到，就不再需要锁了
-            // 取数据的时候只有 getUsersPtr() 内部有锁，多线程并发读的性能很好
-            for (const auto &user : *users_ptr)
+            // 获取 Redis 中的所有用户名
+            redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "HKEYS users");
+            if (reply->type == REDIS_REPLY_ARRAY)
             {
-                if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
+                for (size_t i = 0; i < reply->elements; i++)
                 {
-                    response.add_usernames(user.first);
+                    std::string username = reply->element[i]->str;
+                    // 检查关键词是否为空或用户名包含关键词
+                    if (message->keyword().empty() || username.find(message->keyword()) != std::string::npos)
+                    {
+                        response.add_usernames(username);
+                    }
                 }
             }
+            freeReplyObject(reply);
         }
 
         codec_.send(conn, response);
     }
+
 
     void onGroupRequest(const TcpConnectionPtr &conn,
                         const GroupRequestPtr &message,
@@ -348,59 +372,73 @@ private:
         chat::GroupResponse response;
         response.set_operation(message->operation());
         bool operationSuccess = false;
-        if (message->operation() == chat::GroupOperation::CREATE) {
+        redisReply *existsReply = (redisReply *)redisCommand(redis_ctx_, "EXISTS group:%s", group_name.c_str());
+        bool groupExists = existsReply->integer == 1;
+        freeReplyObject(existsReply);
+
+        if (message->operation() == chat::GroupOperation::CREATE)
+        {
+            if (!groupExists)
             {
-                MutexLockGuard lock(groups_mutex_);
-                if (groups_.find(group_name) == groups_.end()) {
-                    groups_[group_name] = std::unordered_set<std::string>();
-                    groups_[group_name].insert(username);
-                    operationSuccess = true;
-                }
+                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s %s", group_name.c_str(), username.c_str());
+                operationSuccess = reply->integer == 1;
+                freeReplyObject(reply);
             }
 
             response.set_success(operationSuccess);
-            if (!operationSuccess) {
+            if (!operationSuccess)
+            {
                 response.set_error_message("Group already exists.");
             }
         }
-        else if (message->operation() == chat::GroupOperation::JOIN) {
+        else if (message->operation() == chat::GroupOperation::JOIN)
+        {
+            if (groupExists)
             {
-                MutexLockGuard lock(groups_mutex_);
-                if (groups_.find(group_name) != groups_.end()) {
-                    groups_[group_name].insert(username);
-                    operationSuccess = true;
-                }
+                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s %s", group_name.c_str(), username.c_str());
+                operationSuccess = reply->integer == 1;
+                freeReplyObject(reply);
             }
 
             response.set_success(operationSuccess);
-            if (!operationSuccess) {
+            if (!operationSuccess)
+            {
                 response.set_error_message("Group does not exist.");
             }
         }
-        else if (message->operation() == chat::GroupOperation::LEAVE) {
+        else if (message->operation() == chat::GroupOperation::LEAVE)
+        {
+            if (groupExists)
             {
-                MutexLockGuard lock(groups_mutex_);
-                if (groups_.find(group_name) != groups_.end()) {
-                    groups_[group_name].erase(username);
-                    if (groups_[group_name].size() == 0) {
-                        groups_.erase(group_name);
-                    }
-                    operationSuccess = true;
+                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SREM group:%s %s", group_name.c_str(), username.c_str());
+                operationSuccess = reply->integer == 1;
+                freeReplyObject(reply);
+
+                // 如果群组没有成员了，删除群组
+                redisReply *cardReply = (redisReply *)redisCommand(redis_ctx_, "SCARD group:%s", group_name.c_str());
+                if (cardReply->integer == 0)
+                {
+                    redisReply *delReply = (redisReply *)redisCommand(redis_ctx_, "DEL group:%s", group_name.c_str());
+                    freeReplyObject(delReply);
                 }
+                freeReplyObject(cardReply);
             }
 
             response.set_success(operationSuccess);
-            if (!operationSuccess) {
+            if (!operationSuccess)
+            {
                 response.set_error_message("Group does not exist.");
             }
         }
-        else {
+        else
+        {
             LOG_ERROR << "Unknown group operation.";
             response.set_success(false);
             response.set_error_message("Unknown group operation.");
         }
         codec_.send(conn, response);
     }
+
 
     void onUnknownMessageType(const TcpConnectionPtr &conn,
                               const MessagePtr &message,
@@ -410,23 +448,16 @@ private:
         conn->shutdown();
     }
 
-    UserMapPtr getUsersPtr() 
-    {
-        MutexLockGuard lock(users_mutex_);
-        return users_ptr_;
-    }
 
     TcpServer server_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
     
-    MutexLock users_mutex_;
     MutexLock online_users_mutex_;
-    MutexLock groups_mutex_;
+    MutexLock loops_mutex_;
 
-    UserMapPtr users_ptr_  GUARDED_BY(users_mutex_); // Key: username, Value: password
     OnlineUserMap online_users_ GUARDED_BY(online_users_mutex_);
-    GroupMap groups_ GUARDED_BY(groups_mutex_);
+    std::set<EventLoop*> loops_ GUARDED_BY(loops_mutex_);
 };
 
 int main(int argc, char *argv[])

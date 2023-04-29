@@ -47,7 +47,7 @@ target_link_libraries(chat_proto protobuf pthread)
 
 add_executable(chat_server server.cc)
 set_target_properties(chat_server PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
-target_link_libraries(chat_server protobuf_codec chat_proto)
+target_link_libraries(chat_server protobuf_codec chat_proto hiredis)
 
 add_executable(chat_client client.cc)
 set_target_properties(chat_client PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
