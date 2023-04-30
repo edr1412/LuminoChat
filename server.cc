@@ -166,7 +166,7 @@ private:
         else if (message->target_type() == chat::TargetType::GROUP)
         {
             // 群聊
-            redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s", message->target().c_str());
+            redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", message->target().c_str());
             if (reply->type == REDIS_REPLY_ARRAY)
             {
                 for (size_t i = 0; i < reply->elements; i++)
@@ -285,6 +285,10 @@ private:
     {
         LOG_INFO << "onLogoutRequest: " << message->GetTypeName();
         logout(conn);
+        chat::LogoutResponse response;
+        response.set_success(true);
+        response.set_error_message("");
+        codec_.send(conn, response);
     }
 
 
@@ -361,10 +365,9 @@ private:
         codec_.send(conn, response);
     }
 
-
     void onGroupRequest(const TcpConnectionPtr &conn,
                         const GroupRequestPtr &message,
-                        Timestamp) 
+                        Timestamp)
     {
         std::string group_name = message->group_name();
         std::string username = message->username();
@@ -372,7 +375,7 @@ private:
         chat::GroupResponse response;
         response.set_operation(message->operation());
         bool operationSuccess = false;
-        redisReply *existsReply = (redisReply *)redisCommand(redis_ctx_, "EXISTS group:%s", group_name.c_str());
+        redisReply *existsReply = (redisReply *)redisCommand(redis_ctx_, "EXISTS group:%s:users", group_name.c_str());
         bool groupExists = existsReply->integer == 1;
         freeReplyObject(existsReply);
 
@@ -380,9 +383,11 @@ private:
         {
             if (!groupExists)
             {
-                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s %s", group_name.c_str(), username.c_str());
-                operationSuccess = reply->integer == 1;
-                freeReplyObject(reply);
+                redisReply *reply1 = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s:users %s", group_name.c_str(), username.c_str());
+                redisReply *reply2 = (redisReply *)redisCommand(redis_ctx_, "SADD user:%s:groups %s", username.c_str(), group_name.c_str());
+                operationSuccess = reply1->integer == 1 && reply2->integer == 1;
+                freeReplyObject(reply1);
+                freeReplyObject(reply2);
             }
 
             response.set_success(operationSuccess);
@@ -395,40 +400,72 @@ private:
         {
             if (groupExists)
             {
-                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s %s", group_name.c_str(), username.c_str());
-                operationSuccess = reply->integer == 1;
-                freeReplyObject(reply);
+                redisReply *reply1 = (redisReply *)redisCommand(redis_ctx_, "SADD group:%s:users %s", group_name.c_str(), username.c_str());
+                redisReply *reply2 = (redisReply *)redisCommand(redis_ctx_, "SADD user:%s:groups %s", username.c_str(), group_name.c_str());
+                operationSuccess = reply1->integer == 1 && reply2->integer == 1;
+                freeReplyObject(reply1);
+                freeReplyObject(reply2);
             }
 
             response.set_success(operationSuccess);
             if (!operationSuccess)
             {
-                response.set_error_message("Group does not exist.");
+                if (!groupExists)
+                {
+                    response.set_error_message("Group does not exist.");
+                }
+                else
+                {
+                    response.set_error_message("User already in the group.");
+                }
             }
         }
         else if (message->operation() == chat::GroupOperation::LEAVE)
         {
             if (groupExists)
             {
-                redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SREM group:%s %s", group_name.c_str(), username.c_str());
-                operationSuccess = reply->integer == 1;
-                freeReplyObject(reply);
+                redisReply *reply1 = (redisReply *)redisCommand(redis_ctx_, "SREM group:%s:users %s", group_name.c_str(), username.c_str());
+                redisReply *reply2 = (redisReply *)redisCommand(redis_ctx_, "SREM user:%s:groups %s", username.c_str(), group_name.c_str());
+                operationSuccess = reply1->integer == 1 && reply2->integer == 1;
+                freeReplyObject(reply1);
+                freeReplyObject(reply2);
 
                 // 如果群组没有成员了，删除群组
-                redisReply *cardReply = (redisReply *)redisCommand(redis_ctx_, "SCARD group:%s", group_name.c_str());
-                if (cardReply->integer == 0)
+                redisReply *cardReply1 = (redisReply *)redisCommand(redis_ctx_, "SCARD group:%s:users", group_name.c_str());
+                if (cardReply1->integer == 0)
                 {
-                    redisReply *delReply = (redisReply *)redisCommand(redis_ctx_, "DEL group:%s", group_name.c_str());
+                    redisReply *delReply = (redisReply *)redisCommand(redis_ctx_, "DEL group:%s:users", group_name.c_str());
                     freeReplyObject(delReply);
                 }
-                freeReplyObject(cardReply);
+                freeReplyObject(cardReply1);
+
+                // 如果用户没有加入任何群组，删除对应集合
+                redisReply *cardReply2 = (redisReply *)redisCommand(redis_ctx_, "SCARD user:%s:groups", username.c_str());
+                if (cardReply2->integer == 0)
+                {
+                    redisReply *delReply = (redisReply *)redisCommand(redis_ctx_, "DEL user:%s:groups", username.c_str());
+                    freeReplyObject(delReply);
+                }
+                freeReplyObject(cardReply2);
             }
 
             response.set_success(operationSuccess);
             if (!operationSuccess)
             {
-                response.set_error_message("Group does not exist.");
+                if (!groupExists)
+                {
+                    response.set_error_message("Group does not exist.");
+                }
+                else
+                {
+                    response.set_error_message("User not in the group.");
+                }
             }
+        }
+        else if (message->operation() == chat::GroupOperation::QUERY)
+        {
+            operationSuccess = true;
+            response.set_success(operationSuccess);
         }
         else
         {
@@ -436,9 +473,19 @@ private:
             response.set_success(false);
             response.set_error_message("Unknown group operation.");
         }
+        // 获取用户所加入的所有群组
+        redisReply *userGroupsReply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS user:%s:groups", username.c_str());
+        if (userGroupsReply->type == REDIS_REPLY_ARRAY)
+        {
+            for (size_t i = 0; i < userGroupsReply->elements; i++)
+            {
+                response.add_joined_groups(userGroupsReply->element[i]->str);
+            }
+        }
+        freeReplyObject(userGroupsReply);
+
         codec_.send(conn, response);
     }
-
 
     void onUnknownMessageType(const TcpConnectionPtr &conn,
                               const MessagePtr &message,

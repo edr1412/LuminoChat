@@ -23,6 +23,7 @@ using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
 using TextMessageResponsePtr = std::shared_ptr<chat::TextMessageResponse>;
 using LoginResponsePtr = std::shared_ptr<chat::LoginResponse>;
+using LogoutResponsePtr = std::shared_ptr<chat::LogoutResponse>;
 using RegisterResponsePtr = std::shared_ptr<chat::RegisterResponse>;
 using SearchResponsePtr = std::shared_ptr<chat::SearchResponse>;
 using GroupResponsePtr = std::shared_ptr<chat::GroupResponse>;
@@ -39,6 +40,8 @@ public:
   {
     dispatcher_.registerMessageCallback<chat::LoginResponse>(
         std::bind(&ChatClient::onLoginResponse, this, _1, _2, _3));
+    dispatcher_.registerMessageCallback<chat::LogoutResponse>(
+        std::bind(&ChatClient::onLogoutResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::RegisterResponse>(
         std::bind(&ChatClient::onRegisterResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::TextMessage>(
@@ -69,7 +72,7 @@ public:
 
   void send(const std::string &line)
   {
-    MutexLockGuard lock(mutex_);
+    MutexLockGuard lock(connection_mutex_);
     if (connection_)
     {
       processCommand(line);
@@ -83,7 +86,7 @@ private:
              << conn->peerAddress().toIpPort() << " is "
              << (conn->connected() ? "UP" : "DOWN");
 
-    MutexLockGuard lock(mutex_);
+    MutexLockGuard lock(connection_mutex_);
     if (conn->connected())
     {
       connection_ = conn;
@@ -119,11 +122,30 @@ private:
     if (message->success())
     {
       LOG_INFO << "Login succeeded";
+      MutexLockGuard lock(username_mutex_);
       username_ = message->username();
     }
     else
     {
       LOG_ERROR << "Login failed: " << message->error_message();
+    }
+  }
+
+  void onLogoutResponse(const TcpConnectionPtr &conn,
+                        const LogoutResponsePtr &message,
+                        Timestamp)
+  {
+    LOG_INFO << "onLogoutResponse: " << message->GetTypeName();
+
+    if (message->success())
+    {
+      LOG_INFO << "Logout succeeded";
+      // MutexLockGuard lock(username_mutex_);
+      // username_ = "guest";
+    }
+    else
+    {
+      LOG_ERROR << "Logout failed: " << message->error_message();
     }
   }
 
@@ -156,36 +178,53 @@ private:
   }
 
   void onGroupResponse(const TcpConnectionPtr &conn,
-                        const GroupResponsePtr &message,
-                        Timestamp)
+                      const GroupResponsePtr &message,
+                      Timestamp)
   {
-    LOG_INFO << "onGroupResponse: " << message->GetTypeName();
+      LOG_INFO << "onGroupResponse: " << message->GetTypeName();
 
-    if (message->success())
-    {
-        std::string operation;
-        switch (message->operation()) {
-            case chat::GroupOperation::CREATE:
-                operation = "Create group";
-                break;
-            case chat::GroupOperation::JOIN:
-                operation = "Join group";
-                break;
-            case chat::GroupOperation::LEAVE:
-                operation = "Leave group";
-                break;
-            default:
-                operation = "Unknown command";
-                break;
-        }
-        LOG_INFO << operation << " succeeded";
-    }
-    else
-    {
-        LOG_ERROR << "Group operation failed: " << message->error_message();
-    }
+      if (message->success())
+      {
+          std::string operation;
+          switch (message->operation()) {
+              case chat::GroupOperation::CREATE:
+                  operation = "Create group";
+                  break;
+              case chat::GroupOperation::JOIN:
+                  operation = "Join group";
+                  break;
+              case chat::GroupOperation::LEAVE:
+                  operation = "Leave group";
+                  break;
+              case chat::GroupOperation::QUERY:
+                  operation = "Query groups";
+                  break;
+              default:
+                  operation = "Unknown command";
+                  break;
+          }
+          LOG_INFO << operation << " succeeded";
+      }
+      else
+      {
+          LOG_ERROR << "Group operation failed: " << message->error_message();
+      }
+      {
+        MutexLockGuard lock(username_mutex_);
+        printf(">>> User %s's Groups:\n", username_.c_str());
+      }
+      if (message->joined_groups_size() > 0)
+      {
+          for (const auto &group : message->joined_groups())
+          {
+              printf(">>> - %s\n", group.c_str());
+          }
+      }
+      else
+      {
+          printf(">>> (No groups)\n");
+      }
   }
-
 
   void onTextMessage(const TcpConnectionPtr &conn,
                      const TextMessagePtr &message,
@@ -217,6 +256,7 @@ private:
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
+    MutexLockGuard lock(username_mutex_);
 
     if (cmd == "register")
     {
@@ -314,9 +354,15 @@ private:
       {
         request.set_operation(chat::GroupOperation::LEAVE);
       }
+      else if (operation == "query")
+      {
+        request.set_operation(chat::GroupOperation::QUERY);
+      }
       else
       {
         LOG_ERROR << "Unknown group operation: " << operation;
+        LOG_INFO << "Usage: group <create|join|leave|query> <groupname>";
+        return;
       }
       codec_.send(connection_, request);
     }
@@ -341,9 +387,10 @@ private:
   TcpClient client_;
   ProtobufDispatcher dispatcher_;
   ProtobufCodec codec_;
-  MutexLock mutex_;
-  TcpConnectionPtr connection_ GUARDED_BY(mutex_);
-  std::string username_;
+  MutexLock connection_mutex_;
+  TcpConnectionPtr connection_ GUARDED_BY(connection_mutex_);
+  MutexLock username_mutex_;
+  std::string username_ GUARDED_BY(username_mutex_);
 };
 
 int main(int argc, char *argv[])
