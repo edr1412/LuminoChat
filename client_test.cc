@@ -26,6 +26,7 @@ using namespace muduo;
 using namespace muduo::net;
 
 using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
+using LogoutResponsePtr = std::shared_ptr<chat::LogoutResponse>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
 using GroupRequestPtr = std::shared_ptr<chat::GroupRequest>;
 using TextMessagePtr = std::shared_ptr<chat::TextMessage>;
@@ -51,6 +52,8 @@ public:
   {
     dispatcher_.registerMessageCallback<chat::LoginResponse>(
         std::bind(&ChatClient::onLoginResponse, this, _1, _2, _3));
+    dispatcher_.registerMessageCallback<chat::LogoutResponse>(
+        std::bind(&ChatClient::onLogoutResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::RegisterResponse>(
         std::bind(&ChatClient::onRegisterResponse, this, _1, _2, _3));
     dispatcher_.registerMessageCallback<chat::TextMessage>(
@@ -94,7 +97,7 @@ public:
 
   void send(const std::string &line)
   {
-    MutexLockGuard lock(mutex_);
+    MutexLockGuard lock(connection_mutex_);
     if (connection_)
     {
       processCommand(line);
@@ -108,7 +111,7 @@ private:
             //  << conn->peerAddress().toIpPort() << " is "
             //  << (conn->connected() ? "UP" : "DOWN");
 
-    MutexLockGuard lock(mutex_);
+    MutexLockGuard lock(connection_mutex_);
     if (conn->connected())
     {
       connection_ = conn;
@@ -144,11 +147,30 @@ private:
     if (message->success())
     {
       // LOG_INFO << "Login succeeded";
+      MutexLockGuard lock(username_mutex_);
       username_ = message->username();
     }
     else
     {
       // LOG_ERROR << "Login failed: " << message->error_message();
+    }
+  }
+
+  void onLogoutResponse(const TcpConnectionPtr &conn,
+                        const LogoutResponsePtr &message,
+                        Timestamp)
+  {
+    //LOG_INFO << "onLogoutResponse: " << message->GetTypeName();
+
+    if (message->success())
+    {
+      //LOG_INFO << "Logout succeeded";
+      // MutexLockGuard lock(username_mutex_);
+      // username_ = "guest";
+    }
+    else
+    {
+      //LOG_ERROR << "Logout failed: " << message->error_message();
     }
   }
 
@@ -300,6 +322,7 @@ private:
     std::istringstream iss(line);
     std::string cmd;
     iss >> cmd;
+    MutexLockGuard lock(username_mutex_);
 
     if (cmd == "register")
     {
@@ -406,9 +429,15 @@ private:
       {
         request.set_operation(chat::GroupOperation::LEAVE);
       }
+      else if (operation == "query")
+      {
+        request.set_operation(chat::GroupOperation::QUERY);
+      }
       else
       {
         LOG_ERROR << "Unknown group operation: " << operation;
+        LOG_INFO << "Usage: group <create|join|leave|query> <groupname>";
+        return;
       }
       codec_.send(connection_, request);
     }
@@ -433,9 +462,10 @@ private:
   TcpClient client_;
   ProtobufDispatcher dispatcher_;
   ProtobufCodec codec_;
-  MutexLock mutex_;
-  TcpConnectionPtr connection_ GUARDED_BY(mutex_);
-  std::string username_;
+  MutexLock connection_mutex_;
+  TcpConnectionPtr connection_ GUARDED_BY(connection_mutex_);
+  MutexLock username_mutex_;
+  std::string username_ GUARDED_BY(username_mutex_);
   int recvMsgCnt_; //收到的消息条数
   long long recvMsgBytes_; //收到的消息字符数
   int sendMsgCnt_;
