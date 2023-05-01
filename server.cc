@@ -6,6 +6,7 @@
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/TcpServer.h>
 #include <muduo/base/ThreadLocalSingleton.h>
+#include <muduo/base/ThreadPool.h>
 
 #include <functional>
 #include <unordered_map>
@@ -72,6 +73,8 @@ public:
     void start()
     {
         server_.setThreadInitCallback(std::bind(&ChatServer::threadInit, this, _1));
+        threadPool_.setThreadInitCallback(std::bind(&ChatServer::initRedisContext, this));
+        threadPool_.start(2); // 线程池分配2个线程
         server_.start();
     }
 
@@ -140,7 +143,6 @@ private:
                     Timestamp)
     {
         LOG_INFO << "onTextMessage: " << message->GetTypeName();
-
         bool is_sent = false;
         std::string error_msg;
 
@@ -166,34 +168,50 @@ private:
         else if (message->target_type() == chat::TargetType::GROUP)
         {
             // 群聊
-            redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", message->target().c_str());
-            if (reply->type == REDIS_REPLY_ARRAY)
-            {
-                for (size_t i = 0; i < reply->elements; i++)
-                {
-                    std::string user = reply->element[i]->str;
-                    MutexLockGuard lock(online_users_mutex_);
-                    auto it = online_users_.find(user);
-                    if (it != online_users_.end())
-                    {
-                        for (auto loop : it->second)
-                        {
-                            loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
-                        }
-                    }
-                }
-                is_sent = true;
-            }
-            else
-            {
-                error_msg = "Target group not found";
-            }
-            freeReplyObject(reply);
+            // 将 processGroupMessage 函数作为任务提交给线程池
+            threadPool_.run(std::bind(&ChatServer::processGroupMessage, this, conn, message->target(), message));
+            return;
         }
         else
         {
             error_msg = "Invalid target type";
         }
+
+        // 创建并发送 TextMessageResponse
+        chat::TextMessageResponse response;
+        response.set_success(is_sent);
+        response.set_error_message(error_msg);
+        codec_.send(conn, response);
+    }
+
+    void processGroupMessage(const TcpConnectionPtr &conn, const std::string &group_id, const TextMessagePtr &message)
+    {
+        bool is_sent = false;
+        std::string error_msg;
+
+        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", group_id.c_str());
+        if (reply->type == REDIS_REPLY_ARRAY)
+        {
+            for (size_t i = 0; i < reply->elements; i++)
+            {
+                std::string user = reply->element[i]->str;
+                MutexLockGuard lock(online_users_mutex_);
+                auto it = online_users_.find(user);
+                if (it != online_users_.end())
+                {
+                    for (auto loop : it->second)
+                    {
+                        loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
+                    }
+                }
+            }
+            is_sent = true;
+        }
+        else
+        {
+            error_msg = "Target group not found";
+        }
+        freeReplyObject(reply);
 
         // 创建并发送 TextMessageResponse
         chat::TextMessageResponse response;
@@ -497,6 +515,7 @@ private:
 
 
     TcpServer server_;
+    ThreadPool threadPool_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
     

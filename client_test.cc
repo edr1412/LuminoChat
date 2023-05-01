@@ -504,17 +504,16 @@ public:
                 std::bind(&ChatClient::send, chatclients_.back(), "register")
             );
             ioLoop->runAfter(
-                7, // 7s后结束发送
+                2, // 2s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId0)
             );
 
             TimerId timerId1 = ioLoop->runEvery(
-              // dis_(gen_), //随机的时间
-                2, 
+                dis_(gen_), //随机的时间
                 std::bind(&ChatClient::send, chatclients_.back(), "login")
             );
             ioLoop->runAfter(
-                20, // 20s后结束发送
+                2, // 2s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId1)
             );
             
@@ -523,7 +522,7 @@ public:
                 std::bind(&ChatClient::send, chatclients_.back(), "group")
             );
             ioLoop->runAfter(
-                10, // 10s后结束发送
+                2, // 2s后结束发送
                 std::bind(&EventLoop::cancel, ioLoop, timerId2)
             );
 
