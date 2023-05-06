@@ -48,7 +48,8 @@ void RedisPubSub::stop()
 
 bool RedisPubSub::subscribe(const std::string &channel)
 {
-    while (!mtx_.try_lock_for(std::chrono::milliseconds(200)))
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::defer_lock);
+    while (!lock.try_lock_for(std::chrono::milliseconds(200))) 
     {
         publish("__UNLOCK_CHANNEL__", "unlock");
         printf("-");
@@ -61,17 +62,18 @@ bool RedisPubSub::subscribe(const std::string &channel)
     {
         if (redisBufferWrite(redis_context_, &done) != REDIS_OK)
         {
-            mtx_.unlock();
+            printf("Error subscribing to channel %s\n", channel.c_str());
+            std::abort();
             return false;
         }
     }
-    mtx_.unlock();
     return true;
 }
 
 bool RedisPubSub::unsubscribe(const std::string &channel)
 {
-    while (!mtx_.try_lock_for(std::chrono::milliseconds(200)))
+    std::unique_lock<std::timed_mutex> lock(mtx_, std::defer_lock);
+    while (!lock.try_lock_for(std::chrono::milliseconds(200))) 
     {
         publish("__UNLOCK_CHANNEL__", "unlock");
         printf("-");
@@ -84,11 +86,9 @@ bool RedisPubSub::unsubscribe(const std::string &channel)
     {
         if (redisBufferWrite(redis_context_, &done) != REDIS_OK)
         {
-            mtx_.unlock();
             return false;
         }
     }
-    mtx_.unlock();
     return true;
 }
 
@@ -115,13 +115,14 @@ void RedisPubSub::messageListener()
     {
         redisReply *reply = nullptr;
 
-        mtx_.lock();
-        if (redisGetReply(redis_context_, (void **)&reply) != REDIS_OK)
         {
-            //std::cout << "[-] Error receiving message: " << redis_context_->errstr << std::endl;
-            continue;
+            std::unique_lock<std::timed_mutex> lock(mtx_);
+            if (redisGetReply(redis_context_, (void **)&reply) != REDIS_OK)
+            {
+                //std::cout << "[-] Error receiving message: " << redis_context_->errstr << std::endl;
+                continue;
+            }
         }
-        mtx_.unlock();
 
         if (reply == nullptr)
         {
