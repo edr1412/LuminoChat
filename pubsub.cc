@@ -51,6 +51,9 @@ bool RedisPubSub::subscribe(const std::string &channel)
     std::unique_lock<std::timed_mutex> lock(mtx_, std::defer_lock);
     while (!lock.try_lock_for(std::chrono::milliseconds(200))) 
     {
+        // 通过发布一个消息来夺取锁，否则redisGetReply会一直阻塞下去
+        // 参考 https://github.com/redis/hiredis/discussions/1078
+        // unsubscribe 同理
         publish("__UNLOCK_CHANNEL__", "unlock");
         //printf("-");
     }
