@@ -57,5 +57,11 @@ add_executable(chat_client_test client_test.cc)
 set_target_properties(chat_client_test PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
 target_link_libraries(chat_client_test protobuf_codec chat_proto)
 
+add_library(pubsub pubsub.cc)
+target_link_libraries(pubsub hiredis)
+add_executable(pubsub_test pubsub_test.cc)
+set_target_properties(pubsub_test PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
+target_link_libraries(pubsub_test pubsub)
+
 string(TOUPPER ${CMAKE_BUILD_TYPE} BUILD_TYPE)
 message(STATUS "CXX_FLAGS = " ${CMAKE_CXX_FLAGS} " " ${CMAKE_CXX_FLAGS_${BUILD_TYPE}})

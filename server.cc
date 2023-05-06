@@ -189,7 +189,7 @@ private:
         bool is_sent = false;
         std::string error_msg;
 
-        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", group_id.c_str());
+        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", group_id.c_str()); // FIXME: SMEMBERS 复杂度是 O(N)，可以考虑用 SSCAN
         if (reply->type == REDIS_REPLY_ARRAY)
         {
             for (size_t i = 0; i < reply->elements; i++)
