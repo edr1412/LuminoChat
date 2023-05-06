@@ -1,5 +1,5 @@
 #include "pubsub.h"
-#include <iostream>
+//#include <iostream>
 RedisPubSub::RedisPubSub(const std::string &host, int port, const MessageCallback &callback)
     : host_(host),
       port_(port),
@@ -10,7 +10,7 @@ RedisPubSub::RedisPubSub(const std::string &host, int port, const MessageCallbac
 
     if (redis_context_ == nullptr || redis_context_->err)
     {
-        std::cerr << "Redis Pubsub Connection error: " << redis_context_->errstr << std::endl;
+        //std::cerr << "Redis Pubsub Connection error: " << redis_context_->errstr << std::endl;
         std::abort();
     }
 
@@ -52,7 +52,7 @@ bool RedisPubSub::subscribe(const std::string &channel)
     while (!lock.try_lock_for(std::chrono::milliseconds(200))) 
     {
         publish("__UNLOCK_CHANNEL__", "unlock");
-        printf("-");
+        //printf("-");
     }
 
     redisAppendCommand(redis_context_, "SUBSCRIBE %s", channel.c_str());
@@ -62,7 +62,7 @@ bool RedisPubSub::subscribe(const std::string &channel)
     {
         if (redisBufferWrite(redis_context_, &done) != REDIS_OK)
         {
-            printf("Error subscribing to channel %s\n", channel.c_str());
+            //printf("Error subscribing to channel %s\n", channel.c_str());
             std::abort();
             return false;
         }
@@ -76,7 +76,7 @@ bool RedisPubSub::unsubscribe(const std::string &channel)
     while (!lock.try_lock_for(std::chrono::milliseconds(200))) 
     {
         publish("__UNLOCK_CHANNEL__", "unlock");
-        printf("-");
+        //printf("-");
     }
 
     redisAppendCommand(redis_context_, "UNSUBSCRIBE %s", channel.c_str());
