@@ -1,6 +1,7 @@
 #include "codec.h"
 #include "dispatcher.h"
 #include "chat.pb.h"
+#include "pubsub.h"
 
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
@@ -41,7 +42,8 @@ public:
     ChatServer(EventLoop *loop, const InetAddress &listenAddr)
         : server_(loop, listenAddr, "ChatServer"),
           dispatcher_(std::bind(&ChatServer::onUnknownMessageType, this, _1, _2, _3)),
-          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3))
+          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3)),
+          redis_pubsub_("localhost", 6379, std::bind(&ChatServer::onRedisPubSubMessage, this, _1, _2))
     {
         dispatcher_.registerMessageCallback<chat::LoginRequest>(
             std::bind(&ChatServer::onLoginRequest, this, _1, _2, _3));
@@ -127,6 +129,10 @@ private:
     }
     void addUserToOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
         MutexLockGuard lock(online_users_mutex_);
+        if (online_users_.find(username) == online_users_.end()) {
+            // 用户首次登录在此服务器
+            redis_pubsub_.subscribe("user." + username);
+        }
         online_users_[username].insert(conn->getLoop());
     }
     void removeUserFromOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
@@ -134,7 +140,34 @@ private:
         auto& loop_set = online_users_[username];
         loop_set.erase(conn->getLoop());
         if (loop_set.empty()) {
+            // 用户彻底不在此服务器程序上在线了
             online_users_.erase(username);
+            redis_pubsub_.unsubscribe("user." + username);
+        }
+    }
+
+    void onRedisPubSubMessage(const std::string& channel, const std::string& msg) 
+    {
+        LOG_INFO << "onRedisPubSubMessage: " << channel;
+        assert(channel.size() > 5 && channel.substr(0, 5) == "user.");
+        // 从redis中读取消息，转发给在线用户
+        TextMessagePtr message = std::make_shared<chat::TextMessage>();
+        if (message->ParseFromString(msg))
+        {
+            std::string user = channel.substr(5); // message->target()可能是群名，所以使用channel来决定送往哪个用户
+            MutexLockGuard lock(online_users_mutex_);
+            auto it = online_users_.find(user);
+            if (it != online_users_.end())
+            {
+                for (auto loop : it->second)
+                {
+                    loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
+                }
+            }
+            else
+            {
+                LOG_ERROR << "Target user " << user << " not found or is offline.";
+            }
         }
     }
 
@@ -150,20 +183,9 @@ private:
         {
             // 私聊
             std::string user = message->target();
-            MutexLockGuard lock(online_users_mutex_);
-            auto it = online_users_.find(user);
-            if (it != online_users_.end())
-            {
-                for (auto loop : it->second)
-                {
-                    loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
-                }
-                is_sent = true;
-            }
-            else
-            {
-                error_msg = "Target user not found or is offline.";
-            }
+            // 不验证了，直接publish
+            redis_pubsub_.publish("user." + user, message->SerializeAsString());
+            is_sent = true;
         }
         else if (message->target_type() == chat::TargetType::GROUP)
         {
@@ -192,24 +214,24 @@ private:
         redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "SMEMBERS group:%s:users", group_id.c_str()); // FIXME: SMEMBERS 复杂度是 O(N)，可以考虑用 SSCAN
         if (reply->type == REDIS_REPLY_ARRAY)
         {
-            for (size_t i = 0; i < reply->elements; i++)
+            if (reply->elements > 0)
             {
-                std::string user = reply->element[i]->str;
-                MutexLockGuard lock(online_users_mutex_);
-                auto it = online_users_.find(user);
-                if (it != online_users_.end())
+                for (size_t i = 0; i < reply->elements; i++)
                 {
-                    for (auto loop : it->second)
-                    {
-                        loop->queueInLoop(std::bind(&ChatServer::sendTextMessage, this, user, message));
-                    }
+                    std::string user = reply->element[i]->str;
+                    // 不验证了，直接publish
+                    redis_pubsub_.publish("user." + user, message->SerializeAsString());
                 }
+                is_sent = true;
             }
-            is_sent = true;
+            else
+            {
+                error_msg = "Target group not found";
+            }
         }
         else
         {
-            error_msg = "Target group not found";
+            error_msg = "Error executing SMEMBERS command";
         }
         freeReplyObject(reply);
 
@@ -219,7 +241,6 @@ private:
         response.set_error_message(error_msg);
         codec_.send(conn, response);
     }
-
 
     void sendTextMessage(const std::string &target, const TextMessagePtr &message) {
         // 在自己的 loop thread 中执行，无需加锁
@@ -250,10 +271,11 @@ private:
     {
         LOG_INFO << "onLoginRequest: " << message->GetTypeName();
         chat::LoginResponse response;
+        std::string username = message->username();
         std::string storedPassword;
 
         // 获取存储在 Redis 中的密码
-        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "HGET users %s", message->username().c_str());
+        redisReply *reply = (redisReply *)redisCommand(redis_ctx_, "HGET users %s", username.c_str());
         if (reply->type != REDIS_REPLY_NIL)
         {
             storedPassword = reply->str;
@@ -263,11 +285,11 @@ private:
 
         if (!storedPassword.empty() && storedPassword == message->password())
         {
-            response.set_username(message->username());
+            response.set_username(username);
             response.set_success(true);
             response.set_error_message("");
-            LocalConnections::instance()[message->username()].insert(conn);
-            addUserToOnlineUsers(conn, message->username());
+            LocalConnections::instance()[username].insert(conn);
+            addUserToOnlineUsers(conn, username);
         }
         else
         {
@@ -518,6 +540,7 @@ private:
     ThreadPool threadPool_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
+    RedisPubSub redis_pubsub_;
     
     MutexLock online_users_mutex_;
     MutexLock loops_mutex_;
