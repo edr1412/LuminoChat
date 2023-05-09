@@ -17,6 +17,7 @@
 #include <memory>
 #include <unistd.h>
 #include <hiredis/hiredis.h>
+#include <shared_mutex>
 
 using namespace muduo;
 using namespace muduo::net;
@@ -127,16 +128,18 @@ private:
             logout(conn);
         }
     }
+
     void addUserToOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
-        MutexLockGuard lock(online_users_mutex_);
+        std::unique_lock lock(online_users_mutex_);
         if (online_users_.find(username) == online_users_.end()) {
             // 用户首次登录在此服务器
             redis_pubsub_.subscribe("user." + username);
         }
         online_users_[username].insert(conn->getLoop());
     }
+
     void removeUserFromOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
-        MutexLockGuard lock(online_users_mutex_);
+        std::unique_lock lock(online_users_mutex_);
         auto& loop_set = online_users_[username];
         loop_set.erase(conn->getLoop());
         if (loop_set.empty()) {
@@ -150,12 +153,11 @@ private:
     {
         LOG_INFO << "onRedisPubSubMessage: " << channel;
         assert(channel.size() > 5 && channel.substr(0, 5) == "user.");
-        // 从redis中读取消息，转发给在线用户
         TextMessagePtr message = std::make_shared<chat::TextMessage>();
         if (message->ParseFromString(msg))
         {
-            std::string user = channel.substr(5); // message->target()可能是群名，所以使用channel来决定送往哪个用户
-            MutexLockGuard lock(online_users_mutex_);
+            std::string user = channel.substr(5);
+            std::shared_lock lock(online_users_mutex_);
             auto it = online_users_.find(user);
             if (it != online_users_.end())
             {
@@ -374,7 +376,7 @@ private:
         chat::SearchResponse response;
         if (message->online_only()) 
         {
-            MutexLockGuard lock(online_users_mutex_);
+            std::shared_lock lock(online_users_mutex_);
             for (const auto &user : online_users_)
             {
                 if (message->keyword().empty() || user.first.find(message->keyword()) != std::string::npos)
@@ -542,7 +544,7 @@ private:
     ProtobufCodec codec_;
     RedisPubSub redis_pubsub_;
     
-    MutexLock online_users_mutex_;
+    std::shared_mutex online_users_mutex_;
     MutexLock loops_mutex_;
 
     OnlineUserMap online_users_ GUARDED_BY(online_users_mutex_);
