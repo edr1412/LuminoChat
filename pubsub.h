@@ -8,6 +8,7 @@
 #include <functional>
 #include <atomic>
 #include <cstdlib>
+#include <map>
 
 class RedisPubSub {
 public:
@@ -24,14 +25,17 @@ public:
 private:
     void messageListener();
     redisContext* createRedisContext();
+    redisContext* getLocalContext();
 
     std::string host_;
     int port_;
     redisContext *redis_context_;
     std::timed_mutex mtx_;
+    std::mutex connect_mtx_; 
     std::thread listener_thread_;
     MessageCallback callback_;
     std::atomic<bool> stop_;
+    static thread_local std::map<const RedisPubSub*, redisContext*> context_map_;
 };
 
 #endif // PUBSUB_H

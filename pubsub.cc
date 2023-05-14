@@ -28,10 +28,14 @@ RedisPubSub::RedisPubSub(const std::string &host, int port, const MessageCallbac
 redisContext *RedisPubSub::createRedisContext()
 {
     struct timeval timeout = {1, 500000}; // 1.5 seconds
+    std::lock_guard<std::mutex> lock(connect_mtx_); // Is redisConnectWithTimeout thread-safe? Not sure.
     redisContext *ctx = redisConnectWithTimeout(host_.c_str(), port_, timeout);
     // redisSetTimeout(ctx, timeout);
     return ctx;
 }
+
+// 在类的定义外部定义 context_map_
+thread_local std::map<const RedisPubSub*, redisContext*> RedisPubSub::context_map_;
 
 RedisPubSub::~RedisPubSub()
 {
@@ -66,7 +70,6 @@ bool RedisPubSub::subscribe(const std::string &channel)
         if (redisBufferWrite(redis_context_, &done) != REDIS_OK)
         {
             //printf("Error subscribing to channel %s\n", channel.c_str());
-            std::abort();
             return false;
         }
     }
@@ -95,9 +98,24 @@ bool RedisPubSub::unsubscribe(const std::string &channel)
     return true;
 }
 
+redisContext* RedisPubSub::getLocalContext() 
+{
+    auto it = context_map_.find(this);
+    if (it == context_map_.end()) {
+        // 如果这个实例的 redisContext 还没有创建，那么创建一个
+        redisContext* context = createRedisContext();
+        context_map_[this] = context;
+        return context;
+    } else {
+        // 否则，返回已经创建的 redisContext
+        return it->second;
+    }
+}
+
 bool RedisPubSub::publish(const std::string &channel, const std::string &message)
 {
-    thread_local redisContext *local_context = createRedisContext();
+    redisContext *local_context = getLocalContext();
+
     redisAppendCommand(local_context, "PUBLISH %s %s", channel.c_str(), message.c_str());
 
     int done = 0;
@@ -110,6 +128,23 @@ bool RedisPubSub::publish(const std::string &channel, const std::string &message
     }
 
     return true;
+
+    // 下面的写法可保证命令执行是否成功，但会阻塞等待redis的回复，很慢
+    // thread_local redisContext *local_context = createRedisContext();
+    // redisReply *reply = static_cast<redisReply*>(
+    //     redisCommand(local_context, "PUBLISH %s %s", channel.c_str(), message.c_str())
+    // );
+
+    // if(reply == nullptr) {
+    //     // 在此情况下，redisCommand 因为某种原因（例如网络问题）失败，并返回 nullptr
+    //     return false;
+    // }
+    
+    // bool success = (reply->type != REDIS_REPLY_ERROR);
+
+    // freeReplyObject(reply);  // 记得释放 redisReply 对象
+    
+    // return success;
 }
 
 void RedisPubSub::messageListener()

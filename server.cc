@@ -37,15 +37,32 @@ using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
 
 thread_local redisContext *redis_ctx_ = nullptr;
 
+struct RedisConnectionInfo {
+    std::string host;
+    int port;
+    RedisConnectionInfo(const std::string& ip_, uint16_t port_)
+        : host(ip_), port(port_) {}
+};
+
 class ChatServer
 {
 public:
-    ChatServer(EventLoop *loop, const InetAddress &listenAddr)
+    ChatServer(EventLoop* loop, 
+               const InetAddress& listenAddr, 
+               const std::vector<RedisConnectionInfo>& redisServers)
         : server_(loop, listenAddr, "ChatServer"),
           dispatcher_(std::bind(&ChatServer::onUnknownMessageType, this, _1, _2, _3)),
-          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3)),
-          redis_pubsub_("localhost", 6379, std::bind(&ChatServer::onRedisPubSubMessage, this, _1, _2))
+          codec_(std::bind(&ProtobufDispatcher::onProtobufMessage, &dispatcher_, _1, _2, _3))
     {
+        for(const auto& redisServer : redisServers)
+        {
+            redis_pubsubs_.emplace_back(
+                new RedisPubSub(redisServer.host, 
+                                redisServer.port, 
+                                std::bind(&ChatServer::onRedisPubSubMessage, this, _1, _2))
+            );
+        }
+
         dispatcher_.registerMessageCallback<chat::LoginRequest>(
             std::bind(&ChatServer::onLoginRequest, this, _1, _2, _3));
         dispatcher_.registerMessageCallback<chat::LogoutRequest>(
@@ -129,11 +146,44 @@ private:
         }
     }
 
+    bool publish(const std::string& channel, const std::string& message) {
+        // 每个线程独立的last index
+        thread_local size_t index = 0;
+
+        // round-robin, 仅尝试一轮
+        for (size_t i = 0; i < redis_pubsubs_.size(); ++i) {
+            if (redis_pubsubs_[index]->publish(channel, message)) {
+                index = (index + 1) % redis_pubsubs_.size();
+                return true;
+            }
+            index = (index + 1) % redis_pubsubs_.size();
+        }
+        return false;
+    }
+
+
+    void subscribe(const std::string& channel)
+    {
+        for(auto& redis_pubsub : redis_pubsubs_)
+        {
+            redis_pubsub->subscribe(channel);
+        }
+    }
+
+    void unsubscribe(const std::string& channel)
+    {
+        for(auto& redis_pubsub : redis_pubsubs_)
+        {
+            redis_pubsub->unsubscribe(channel);
+        }
+    }
+
     void addUserToOnlineUsers(const TcpConnectionPtr &conn, const std::string &username) {
         std::unique_lock lock(online_users_mutex_);
         if (online_users_.find(username) == online_users_.end()) {
             // 用户首次登录在此服务器
-            redis_pubsub_.subscribe("user." + username);
+            subscribe("user." + username);
+            //threadPool_.run(std::bind(&ChatServer::subscribe, this, "user." + username));
         }
         online_users_[username].insert(conn->getLoop());
     }
@@ -145,7 +195,8 @@ private:
         if (loop_set.empty()) {
             // 用户彻底不在此服务器程序上在线了
             online_users_.erase(username);
-            redis_pubsub_.unsubscribe("user." + username);
+            unsubscribe("user." + username);
+            //threadPool_.run(std::bind(&ChatServer::unsubscribe, this, "user." + username));
         }
     }
 
@@ -186,7 +237,7 @@ private:
             // 私聊
             std::string user = message->target();
             // 不验证了，直接publish
-            redis_pubsub_.publish("user." + user, message->SerializeAsString());
+            publish("user." + user, message->SerializeAsString());
             is_sent = true;
         }
         else if (message->target_type() == chat::TargetType::GROUP)
@@ -222,7 +273,7 @@ private:
                 {
                     std::string user = reply->element[i]->str;
                     // 不验证了，直接publish
-                    redis_pubsub_.publish("user." + user, message->SerializeAsString());
+                    publish("user." + user, message->SerializeAsString());
                 }
                 is_sent = true;
             }
@@ -542,7 +593,7 @@ private:
     ThreadPool threadPool_;
     ProtobufDispatcher dispatcher_;
     ProtobufCodec codec_;
-    RedisPubSub redis_pubsub_;
+    std::vector<std::unique_ptr<RedisPubSub>> redis_pubsubs_;
     
     std::shared_mutex online_users_mutex_;
     MutexLock loops_mutex_;
@@ -554,21 +605,31 @@ private:
 int main(int argc, char *argv[])
 {
     LOG_INFO << "pid = " << getpid();
-    if (argc > 1)
+    if (argc > 4)
     {
         uint16_t port = static_cast<uint16_t>(atoi(argv[1]));
         InetAddress listenAddr(port);
         EventLoop loop;
-        ChatServer server(&loop, listenAddr);
+
+        // Parse the Redis servers from the command line arguments
+        std::vector<RedisConnectionInfo> redisServers;
+        for (int i = 3; i + 1 < argc; i += 2) {
+            std::string host = argv[i];
+            uint16_t port = static_cast<uint16_t>(atoi(argv[i + 1]));
+            redisServers.emplace_back(host, port);
+            LOG_INFO << "Redis server " << host << ":" << port;
+        }
+
+        ChatServer server(&loop, listenAddr, redisServers);
         if (argc > 2)
         {
-        server.setThreadNum(atoi(argv[2]));
+            server.setThreadNum(atoi(argv[2]));
         }
         server.start();
         loop.loop();
     }
     else
     {
-        printf("Usage: %s listen_port  [thread_num]\n", argv[0]);
+        printf("Usage: %s listen_port [thread_num] [redis_host redis_port]...\n", argv[0]);
     }
 }
