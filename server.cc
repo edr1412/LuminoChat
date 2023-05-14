@@ -182,8 +182,8 @@ private:
         std::unique_lock lock(online_users_mutex_);
         if (online_users_.find(username) == online_users_.end()) {
             // 用户首次登录在此服务器
-            subscribe("user." + username);
-            //threadPool_.run(std::bind(&ChatServer::subscribe, this, "user." + username));
+            //subscribe("user." + username);
+            threadPool_.run(std::bind(&ChatServer::subscribe, this, "user." + username));
         }
         online_users_[username].insert(conn->getLoop());
     }
@@ -342,8 +342,8 @@ private:
             response.set_success(true);
             response.set_error_message("");
             LocalConnections::instance()[username].insert(conn);
-            //addUserToOnlineUsers(conn, username);
-            threadPool_.run(std::bind(&ChatServer::addUserToOnlineUsers, this, conn, username));
+            addUserToOnlineUsers(conn, username);
+            //threadPool_.run(std::bind(&ChatServer::addUserToOnlineUsers, this, conn, username));
         }
         else
         {
