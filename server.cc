@@ -195,8 +195,8 @@ private:
         if (loop_set.empty()) {
             // 用户彻底不在此服务器程序上在线了
             online_users_.erase(username);
-            unsubscribe("user." + username);
-            //threadPool_.run(std::bind(&ChatServer::unsubscribe, this, "user." + username));
+            //unsubscribe("user." + username);
+            threadPool_.run(std::bind(&ChatServer::unsubscribe, this, "user." + username));
         }
     }
 
@@ -342,7 +342,8 @@ private:
             response.set_success(true);
             response.set_error_message("");
             LocalConnections::instance()[username].insert(conn);
-            addUserToOnlineUsers(conn, username);
+            //addUserToOnlineUsers(conn, username);
+            threadPool_.run(std::bind(&ChatServer::addUserToOnlineUsers, this, conn, username));
         }
         else
         {
@@ -366,6 +367,7 @@ private:
                 if (LocalConnections::instance()[username].empty()) {
                     LocalConnections::instance().erase(username);
                     removeUserFromOnlineUsers(conn, username);
+                    //threadPool_.run(std::bind(&ChatServer::removeUserFromOnlineUsers, this, conn, username));
                 }
                 break;
             }
