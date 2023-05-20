@@ -17,6 +17,7 @@
 #include <memory>
 #include <unistd.h>
 #include <hiredis/hiredis.h>
+#include <hiredis_cluster/hircluster.h>
 #include <shared_mutex>
 
 using namespace muduo;
@@ -34,6 +35,13 @@ using ConnectionMap = std::unordered_map<std::string,
     std::unordered_set<TcpConnectionPtr>>;  // 即使在同一个EventLoop中，
                                             //一个用户也可能有多个连接
 using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
+
+#define USE_REDIS_CLUSTER
+#ifdef USE_REDIS_CLUSTER
+    #define redisContext redisClusterContext
+    #define redisFree redisClusterFree
+    #define redisCommand redisClusterCommand
+#endif
 
 thread_local redisContext *redis_ctx_ = nullptr;
 
@@ -109,7 +117,16 @@ private:
     {
         if (!redis_ctx_)
         {
-            redis_ctx_ = redisConnect("127.0.0.1", 6379);
+            #ifdef USE_REDIS_CLUSTER
+                struct timeval timeout = {1, 500000};
+                redis_ctx_ = redisClusterContextInit();
+                redisClusterSetOptionAddNodes(redis_ctx_, "127.0.0.1:6379");
+                redisClusterSetOptionConnectTimeout(redis_ctx_, timeout);
+                redisClusterSetOptionRouteUseSlots(redis_ctx_);
+                redisClusterConnect2(redis_ctx_);
+            #else
+                redis_ctx_ = redisConnect("127.0.0.1", 6379);
+            #endif
             if (redis_ctx_->err)
             {
                 LOG_ERROR << "Redis connection error: " << redis_ctx_->errstr;
