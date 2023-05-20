@@ -5,6 +5,7 @@
 make sure your muduo has protobuf feature, otherwise install libprotobuf-dev before you build muduo
 sudo apt install pkg-config libglib2.0-dev libevent-dev
 git clone https://github.com/Nordix/hiredis-cluster.git && cd hiredis-cluster && mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DENABLE_SSL=OFF .. && make && sudo make install
+sudo ldconfig
 
 ## Deploy
 sudo apt install redis-server
@@ -61,8 +62,9 @@ sudo apt install redis-server
     ```
     brew services reload nginx
 
+    start the server on each machine:
+    bin/chat_server 1145 3 172.16.61.1 6379
+
     now we can connect client to 172.16.61.1:1145
+    bin/chat_client 172.16.61.1 1145
 
-
-
-    
