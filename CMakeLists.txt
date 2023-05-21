@@ -51,6 +51,18 @@ add_executable(pubsub_test pubsub_test.cc)
 set_target_properties(pubsub_test PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
 target_link_libraries(pubsub_test pubsub)
 
+add_library(cert_lib cert.cpp)
+add_library(SSL_Helper_lib SSL_Helper.cpp)
+
+target_link_libraries(SSL_Helper_lib PRIVATE cert_lib ssl crypto dl)
+
+add_executable(sslClient ssl_client.cpp)
+add_executable(sslServer ssl_server.cpp)
+
+# 为客户端和服务器链接库
+target_link_libraries(sslClient muduo_net muduo_base pthread SSL_Helper_lib)
+target_link_libraries(sslServer muduo_net muduo_base pthread SSL_Helper_lib)
+
 add_executable(chat_server server.cc)
 set_target_properties(chat_server PROPERTIES COMPILE_FLAGS "-Wno-error=shadow")
 target_link_libraries(chat_server protobuf_codec chat_proto pubsub hiredis_cluster)

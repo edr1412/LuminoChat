@@ -36,7 +36,7 @@ using ConnectionMap = std::unordered_map<std::string,
                                             //一个用户也可能有多个连接
 using LocalConnections = ThreadLocalSingleton<ConnectionMap>;
 
-#define USE_REDIS_CLUSTER
+//#define USE_REDIS_CLUSTER
 #ifdef USE_REDIS_CLUSTER
     #define redisContext redisClusterContext
     #define redisFree redisClusterFree
@@ -199,8 +199,8 @@ private:
         std::unique_lock lock(online_users_mutex_);
         if (online_users_.find(username) == online_users_.end()) {
             // 用户首次登录在此服务器
-            //subscribe("user." + username);
-            threadPool_.run(std::bind(&ChatServer::subscribe, this, "user." + username));
+            subscribe("user." + username);
+            //threadPool_.run(std::bind(&ChatServer::subscribe, this, "user." + username));
         }
         online_users_[username].insert(conn->getLoop());
     }
@@ -212,8 +212,8 @@ private:
         if (loop_set.empty()) {
             // 用户彻底不在此服务器程序上在线了
             online_users_.erase(username);
-            //unsubscribe("user." + username);
-            threadPool_.run(std::bind(&ChatServer::unsubscribe, this, "user." + username));
+            unsubscribe("user." + username);
+            //threadPool_.run(std::bind(&ChatServer::unsubscribe, this, "user." + username));
         }
     }
 
