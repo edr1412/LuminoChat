@@ -1,6 +1,7 @@
 #include "ACAutomaton.h"
 #include <iostream>
 #include <cassert>
+#include <vector>
 
 int main() {
     ACAutomaton ac;

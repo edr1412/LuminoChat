@@ -1,6 +1,7 @@
 #include "codec.h"
 #include "dispatcher.h"
 #include "chat.pb.h"
+#include "ACAutomaton.h"
 
 #include <muduo/base/Logging.h>
 #include <muduo/base/Mutex.h>
@@ -57,6 +58,11 @@ public:
     client_.setMessageCallback(
         std::bind(&ProtobufCodec::onMessage, &codec_, _1, _2, _3));
     client_.enableRetry();
+    std::vector<std::string> words = {"Steve Jobs", "Tim Cook", "Jony Ive", "Apple Inc.", "iPhone", "iPad", "MacBook", "iMac", "Apple Watch", "iOS", "macOS", "Safari", "Apple Music", "HomePod", "iCloud", "乔布斯", "蒂姆·库克", "强尼·艾维", "苹果公司", "苹果手机", "苹果平板", "麦金塔电脑"};
+    for (std::string word : words) {
+        ac_.insert(word);
+    }
+    ac_.build();
   }
 
   void connect()
@@ -240,7 +246,7 @@ private:
     {
         group = message->target();
     }
-    printf("<<< %s [%s] %s\n", group.c_str(), message->sender().c_str(), message->content().c_str());
+    printf("<<< %s [%s] %s\n", group.c_str(), message->sender().c_str(), ac_.filter(message->content()).c_str());
   }
 
   void onUnknownMessageType(const TcpConnectionPtr &conn,
@@ -391,6 +397,7 @@ private:
   TcpConnectionPtr connection_ GUARDED_BY(connection_mutex_);
   MutexLock username_mutex_;
   std::string username_ GUARDED_BY(username_mutex_);
+  ACAutomaton ac_;
 };
 
 int main(int argc, char *argv[])
