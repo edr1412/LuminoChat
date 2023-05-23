@@ -297,7 +297,8 @@ private:
     else if (cmd == "send")
     {
       std::string target_type, target, content;
-      iss >> target_type >> target >> content;
+      iss >> target_type >> target;
+      std::getline(iss, content);
       chat::TextMessage textMessage;
       textMessage.set_sender(username_);
       textMessage.set_content(content);
