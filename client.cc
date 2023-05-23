@@ -17,6 +17,7 @@
 
 using namespace muduo;
 using namespace muduo::net;
+using namespace std::placeholders;
 
 using LoginRequestPtr = std::shared_ptr<chat::LoginRequest>;
 using RegisterRequestPtr = std::shared_ptr<chat::RegisterRequest>;
@@ -394,9 +395,9 @@ private:
   ProtobufDispatcher dispatcher_;
   ProtobufCodec codec_;
   MutexLock connection_mutex_;
-  TcpConnectionPtr connection_ GUARDED_BY(connection_mutex_);
+  TcpConnectionPtr connection_;
   MutexLock username_mutex_;
-  std::string username_ GUARDED_BY(username_mutex_);
+  std::string username_;
   ACAutomaton ac_;
 };
 
@@ -409,7 +410,7 @@ int main(int argc, char *argv[])
     uint16_t port = static_cast<uint16_t>(atoi(argv[2]));
     InetAddress serverAddr(argv[1], port);
 
-    ChatClient client(loopThread.getLoop(), serverAddr);
+    ChatClient client(loopThread.startLoop(), serverAddr);
     client.connect();
 
     std::string line;
